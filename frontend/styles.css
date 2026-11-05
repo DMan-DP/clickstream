@@ -1,0 +1,295 @@
+:root {
+  --bg: #f6f3ee;
+  --card: #ffffff;
+  --text: #2b2420;
+  --muted: #8a7f78;
+  --border: #e3dcd4;
+  --accent: #d9480f;
+  --accent-hover: #bf3f0c;
+  --accent-soft: #fff1e8;
+  --error: #c92a2a;
+  --radius: 12px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.page {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.75rem;
+}
+
+.subtitle {
+  margin: 4px 0 20px;
+  color: var(--muted);
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 16px;
+}
+
+.section {
+  margin: 0 0 20px;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.label {
+  display: block;
+  margin: 12px 0 6px;
+  padding: 0;
+  font-weight: 600;
+}
+
+.section > .label:first-child,
+.section > legend.label {
+  margin-top: 0;
+}
+
+input[type="text"],
+input[type="tel"],
+select,
+textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Size: radio buttons styled as a segmented control */
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented label {
+  padding: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.segmented input:checked + label {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.segmented input:focus-visible + label {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  cursor: pointer;
+}
+
+.check input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--accent);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.stepper,
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.stepper input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.inline input {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn {
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn-secondary {
+  background: #fff;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.btn-secondary:hover {
+  border-color: var(--muted);
+}
+
+.btn-icon {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  font-size: 1.25rem;
+}
+
+.hint {
+  margin: 6px 0 0;
+  min-height: 1.5em;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.hint-error {
+  color: var(--error);
+}
+
+.total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+  font-size: 1.125rem;
+}
+
+.total strong {
+  font-size: 1.5rem;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 10px;
+}
+
+/* Touch devices: comfortable tap targets */
+@media (pointer: coarse) {
+  .btn,
+  .segmented label,
+  input[type="text"],
+  input[type="tel"],
+  select {
+    min-height: 44px;
+  }
+
+  .stepper input[type="range"] {
+    height: 44px;
+  }
+}
+
+/* Phones: total and actions stick to the bottom of the screen */
+@media (max-width: 599px) {
+  .page {
+    padding-bottom: 0;
+  }
+
+  .card {
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding-bottom: 0;
+  }
+
+  .order-bar {
+    position: sticky;
+    bottom: 0;
+    margin: 0 -16px;
+    padding: 0 16px calc(12px + env(safe-area-inset-bottom));
+    background: var(--card);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 12px rgb(0 0 0 / 0.06);
+  }
+
+  .order-bar .total {
+    border-top: 0;
+    padding: 10px 0;
+  }
+
+  .order-bar .hint:empty {
+    display: none;
+  }
+}
+
+/* Wide screens: two columns, pizza on the left, delivery on the right */
+@media (min-width: 900px) {
+  .page {
+    max-width: 960px;
+  }
+
+  .card {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 32px;
+    padding: 28px;
+  }
+
+  .col {
+    min-width: 0;
+  }
+
+  .order-bar {
+    grid-column: 2;
+  }
+}

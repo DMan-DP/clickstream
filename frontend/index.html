@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Пицца на заказ</title>
+  <link rel="stylesheet" href="styles.css">
+  <!-- Full endpoint URL when the page is not served by tracker-api:
+       <script src="tracker.js" data-endpoint="http://localhost:8080/events"></script> -->
+  <script src="tracker.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <h1>Пицца на заказ</h1>
+      <p class="subtitle">Соберите пиццу и оформите доставку</p>
+    </header>
+
+    <form id="order-form" class="card" novalidate>
+      <div class="col">
+        <section class="section">
+          <label class="label" for="pizza-select">Пицца</label>
+          <select id="pizza-select" name="pizza">
+            <option value="margherita" data-price="450">Маргарита — 450 ₽</option>
+            <option value="pepperoni" data-price="550">Пепперони — 550 ₽</option>
+            <option value="four-cheese" data-price="600">Четыре сыра — 600 ₽</option>
+            <option value="hawaiian" data-price="520">Гавайская — 520 ₽</option>
+          </select>
+        </section>
+
+        <fieldset class="section">
+          <legend class="label">Размер</legend>
+          <div class="segmented">
+            <input type="radio" id="size-small" name="size" value="small" data-factor="0.8">
+            <label for="size-small">25 см</label>
+            <input type="radio" id="size-medium" name="size" value="medium" data-factor="1" checked>
+            <label for="size-medium">30 см</label>
+            <input type="radio" id="size-large" name="size" value="large" data-factor="1.3">
+            <label for="size-large">35 см</label>
+          </div>
+        </fieldset>
+
+        <fieldset class="section">
+          <legend class="label">Добавки</legend>
+          <label class="check">
+            <input type="checkbox" id="topping-cheese" name="toppings" value="cheese" data-price="90">
+            Двойной сыр <span class="muted">+90 ₽</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="topping-mushrooms" name="toppings" value="mushrooms" data-price="70">
+            Грибы <span class="muted">+70 ₽</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="topping-jalapeno" name="toppings" value="jalapeno" data-price="60">
+            Халапеньо <span class="muted">+60 ₽</span>
+          </label>
+        </fieldset>
+
+        <section class="section">
+          <label class="label" for="quantity-slider">Количество: <output id="quantity-output" for="quantity-slider">1</output></label>
+          <div class="stepper">
+            <button type="button" id="quantity-minus-button" class="btn btn-icon" aria-label="Меньше">−</button>
+            <input type="range" id="quantity-slider" name="quantity" min="1" max="10" value="1">
+            <button type="button" id="quantity-plus-button" class="btn btn-icon" aria-label="Больше">+</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="col">
+        <section class="section">
+          <label class="label" for="customer-name">Имя</label>
+          <input type="text" id="customer-name" name="name" autocomplete="name" placeholder="Как к вам обращаться">
+
+          <label class="label" for="customer-phone">Телефон</label>
+          <input type="tel" id="customer-phone" name="phone" autocomplete="tel" placeholder="+7 900 000-00-00">
+
+          <label class="label" for="delivery-address">Адрес доставки</label>
+          <input type="text" id="delivery-address" name="address" autocomplete="street-address" placeholder="Улица, дом, квартира">
+
+          <label class="label" for="order-comment">Комментарий курьеру</label>
+          <textarea id="order-comment" name="comment" rows="2" placeholder="Код домофона, этаж"></textarea>
+        </section>
+
+        <section class="section">
+          <label class="label" for="promo-code">Промокод</label>
+          <div class="inline">
+            <input type="text" id="promo-code" name="promo" placeholder="PIZZA10">
+            <button type="button" id="promo-apply-button" class="btn btn-secondary">Применить</button>
+          </div>
+          <p id="promo-status" class="hint" aria-live="polite"></p>
+        </section>
+      </div>
+
+      <div class="order-bar">
+        <div class="total">
+          <span>Итого</span>
+          <strong id="order-total">450 ₽</strong>
+        </div>
+
+        <div class="actions">
+          <button type="button" id="reset-button" class="btn btn-secondary">Сбросить</button>
+          <button type="submit" id="submit-order-button" class="btn btn-primary">Заказать</button>
+        </div>
+
+        <p id="order-status" class="hint" aria-live="polite"></p>
+      </div>
+    </form>
+  </main>
+</body>
+</html>
