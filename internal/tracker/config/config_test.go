@@ -65,7 +65,7 @@ func TestBroker(t *testing.T) {
 			addrs, err := getKafkaBrokers()
 
 			if (err != nil) != config.wantErr {
-				t.Errorf("getKafkaBrokers(%q) error = %v, wantErr %v", config.in, err, config.wantErr)
+				t.Errorf("getKafkaBrokers(%q) err = %v, wantErr %v", config.in, err, config.wantErr)
 			}
 
 			if err != nil {

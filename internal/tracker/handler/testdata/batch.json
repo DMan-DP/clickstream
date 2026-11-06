@@ -1,0 +1,162 @@
+{
+  "session_id": "3ed98b41-6ae1-430e-8a3d-9945cbbe1c29",
+  "events": [
+    {
+      "event_id": "05d4eec3-a4ce-465e-91fc-562da38b0c45",
+      "type": "page_view",
+      "element_id": "page",
+      "client_ts": "2026-11-06T10:15:00.000Z"
+    },
+    {
+      "event_id": "d493b1ad-837c-495d-80ac-d6d254023532",
+      "type": "focus",
+      "element_id": "pizza-select",
+      "client_ts": "2026-11-06T10:15:02.100Z"
+    },
+    {
+      "event_id": "5484f238-4f35-4d81-aede-dd222b37f7ca",
+      "type": "click",
+      "element_id": "pizza-select",
+      "client_ts": "2026-11-06T10:15:02.140Z"
+    },
+    {
+      "event_id": "4ae9b1e7-e0c0-4ec7-9c64-03748264ed4d",
+      "type": "change",
+      "element_id": "pizza-select",
+      "value": "pepperoni",
+      "client_ts": "2026-11-06T10:15:03.640Z"
+    },
+    {
+      "event_id": "e29cd20b-6026-408f-977a-801b257565ee",
+      "type": "blur",
+      "element_id": "pizza-select",
+      "client_ts": "2026-11-06T10:15:04.540Z"
+    },
+    {
+      "event_id": "33e3b185-06e1-4b54-86b3-b2ae21490255",
+      "type": "focus",
+      "element_id": "size-large",
+      "client_ts": "2026-11-06T10:15:04.840Z"
+    },
+    {
+      "event_id": "7b877941-3ada-408a-81e0-07ef56474f6c",
+      "type": "click",
+      "element_id": "size-large",
+      "client_ts": "2026-11-06T10:15:04.850Z"
+    },
+    {
+      "event_id": "87775142-c117-433c-a491-4f6ade2c85ea",
+      "type": "change",
+      "element_id": "size-large",
+      "value": "large",
+      "client_ts": "2026-11-06T10:15:04.855Z"
+    },
+    {
+      "event_id": "8636f60f-704b-4d73-9f12-e252511d70ce",
+      "type": "blur",
+      "element_id": "size-large",
+      "client_ts": "2026-11-06T10:15:05.555Z"
+    },
+    {
+      "event_id": "4db8bc38-0213-48cf-841d-c7e21ed43dbb",
+      "type": "focus",
+      "element_id": "topping-cheese",
+      "client_ts": "2026-11-06T10:15:05.755Z"
+    },
+    {
+      "event_id": "2ab340b1-38ca-45fe-b146-94a28654551b",
+      "type": "click",
+      "element_id": "topping-cheese",
+      "client_ts": "2026-11-06T10:15:05.765Z"
+    },
+    {
+      "event_id": "74cf2d0b-bf58-436c-8e4f-2b206963eaf2",
+      "type": "change",
+      "element_id": "topping-cheese",
+      "value": "true",
+      "client_ts": "2026-11-06T10:15:05.770Z"
+    },
+    {
+      "event_id": "eb5d0366-ca7a-4ddd-bdf5-b33b93970d52",
+      "type": "blur",
+      "element_id": "topping-cheese",
+      "client_ts": "2026-11-06T10:15:06.370Z"
+    },
+    {
+      "event_id": "cab726c5-2550-41eb-9c01-3db5940353ab",
+      "type": "focus",
+      "element_id": "quantity-slider",
+      "client_ts": "2026-11-06T10:15:06.770Z"
+    },
+    {
+      "event_id": "caf72bb6-b590-43d9-9159-8a8346896970",
+      "type": "input",
+      "element_id": "quantity-slider",
+      "value": "3",
+      "client_ts": "2026-11-06T10:15:07.670Z"
+    },
+    {
+      "event_id": "ed0dd6c4-9f29-49c1-951f-d3a304abaa27",
+      "type": "change",
+      "element_id": "quantity-slider",
+      "value": "3",
+      "client_ts": "2026-11-06T10:15:07.770Z"
+    },
+    {
+      "event_id": "bf6de515-d073-4f47-b704-abb1f21e5b20",
+      "type": "blur",
+      "element_id": "quantity-slider",
+      "client_ts": "2026-11-06T10:15:08.270Z"
+    },
+    {
+      "event_id": "bb4aac9d-95cc-411d-b6c5-b5dc1587b91c",
+      "type": "focus",
+      "element_id": "customer-name",
+      "client_ts": "2026-11-06T10:15:09.070Z"
+    },
+    {
+      "event_id": "c344e56c-de98-446a-953a-8b2315fc57f8",
+      "type": "click",
+      "element_id": "customer-name",
+      "client_ts": "2026-11-06T10:15:09.110Z"
+    },
+    {
+      "event_id": "c6be782a-a0b9-4ddf-ba5a-c019577375de",
+      "type": "input",
+      "element_id": "customer-name",
+      "value": "5",
+      "client_ts": "2026-11-06T10:15:11.510Z"
+    },
+    {
+      "event_id": "8eea3c1e-79f8-47a6-9a29-bc2da9f0e89d",
+      "type": "change",
+      "element_id": "customer-name",
+      "value": "5",
+      "client_ts": "2026-11-06T10:15:12.710Z"
+    },
+    {
+      "event_id": "c4205954-d2c9-41a9-912d-ef6b6912a935",
+      "type": "blur",
+      "element_id": "customer-name",
+      "client_ts": "2026-11-06T10:15:12.710Z"
+    },
+    {
+      "event_id": "917efc80-0b3a-460c-9520-9fd01bb9b651",
+      "type": "focus",
+      "element_id": "submit-order-button",
+      "client_ts": "2026-11-06T10:15:14.510Z"
+    },
+    {
+      "event_id": "226f8a81-e700-479c-8d3e-f00a57286816",
+      "type": "click",
+      "element_id": "submit-order-button",
+      "client_ts": "2026-11-06T10:15:14.520Z"
+    },
+    {
+      "event_id": "06c328fa-970b-49a7-bd43-73ded3f0e901",
+      "type": "submit",
+      "element_id": "order-form",
+      "client_ts": "2026-11-06T10:15:14.525Z"
+    }
+  ]
+}
