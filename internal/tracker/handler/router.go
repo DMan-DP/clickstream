@@ -4,8 +4,13 @@ import (
 	"net/http"
 )
 
-func NewRouter() *http.ServeMux {
+type Routes struct {
+	Events http.Handler
+}
+
+func NewRouter(r Routes) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", Health)
+	mux.Handle("POST /events", r.Events)
 	return mux
 }

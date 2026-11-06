@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -19,19 +20,39 @@ type ingester interface {
 }
 
 type Events struct {
+	logger        *slog.Logger
 	eventsService ingester
 }
 
-func NewEvents(eventsService ingester) *Events {
-	return &Events{eventsService: eventsService}
+func NewEvents(logger *slog.Logger, eventsService ingester) *Events {
+	return &Events{
+		logger:        logger,
+		eventsService: eventsService,
+	}
 }
 
-func (*Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+
+	_ /*req*/, err := decodeBatch(r.Body)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "Request entity too large")
+			return
+		}
+
+		h.logger.Error("bad request", "err", err)
+		writeError(w, http.StatusBadRequest, "Bad request")
+		return
+	}
 }
 
 func decodeBatch(r io.Reader) (batchRequest, error) {
 	var req batchRequest
 	dec := json.NewDecoder(r)
+
 	if err := dec.Decode(&req); err != nil {
 		return batchRequest{}, fmt.Errorf("decode batch: %w", err)
 	}

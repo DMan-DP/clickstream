@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,18 +13,26 @@ import (
 
 	"github.com/DMan-DP/clickstream/internal/tracker/config"
 	"github.com/DMan-DP/clickstream/internal/tracker/handler"
+	"github.com/DMan-DP/clickstream/internal/tracker/service"
 	"golang.org/x/sync/errgroup"
 )
 
-func run() error {
+func run(logger *slog.Logger) error {
 	cfg, err := config.GetConfig()
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 
+	eventsService := service.NewEvents()
+	eventsHandler := handler.NewEvents(logger, eventsService)
+
+	routes := handler.Routes{
+		Events: eventsHandler,
+	}
+
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           handler.WithTimeout(handler.NewRouter(), 5*time.Second),
+		Handler:           handler.WithTimeout(handler.NewRouter(routes), 5*time.Second),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -36,7 +44,7 @@ func run() error {
 
 	g, ctx := errgroup.WithContext(signalCtx)
 
-	log.Printf("Server starting on %s", cfg.HTTPAddr)
+	logger.Info("server starting", "addr", cfg.HTTPAddr)
 
 	g.Go(func() error {
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -49,7 +57,7 @@ func run() error {
 		<-ctx.Done()
 		stop()
 
-		log.Println("Shutting down server")
+		logger.Info("shutting down server")
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -61,14 +69,17 @@ func run() error {
 		return fmt.Errorf("server: %w", err)
 	}
 
-	log.Println("Server gracefully stopped")
+	logger.Info("server gracefully stopped")
 	return nil
 }
 
 func main() {
-	err := run()
+	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger := slog.New(handler)
+
+	err := run(logger)
 	if err != nil {
-		log.Printf("Error: %v", err)
+		logger.Error("run failed", "err", err)
 		os.Exit(1)
 	}
 }

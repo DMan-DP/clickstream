@@ -161,6 +161,18 @@ func TestDecodeBatch(t *testing.T) {
 			wantValue: nil,
 			wantErr:   true,
 		},
+		{
+			name:      "unknown top level field ignored",
+			in:        `{"session_id": "3ed98b41-6ae1-430e-8a3d-9945cbbe1c29", "device": "mobile", "events": [{"event_id": "05d4eec3-a4ce-465e-91fc-562da38b0c45", "type": "click", "element_id": "size-large", "client_ts": "2026-11-06T10:15:00.000Z"}]}`,
+			wantValue: nil,
+			wantErr:   false,
+		},
+		{
+			name:      "unknown event field ignored",
+			in:        `{"session_id": "3ed98b41-6ae1-430e-8a3d-9945cbbe1c29", "events": [{"event_id": "05d4eec3-a4ce-465e-91fc-562da38b0c45", "type": "change", "element_id": "pizza-select", "value": "pepperoni", "page_x": 120, "client_ts": "2026-11-06T10:15:00.000Z"}]}`,
+			wantValue: new("pepperoni"),
+			wantErr:   false,
+		},
 	}
 
 	for _, tc := range tests {
@@ -207,5 +219,5 @@ func formatStringPtr(s *string) string {
 }
 
 func TestEventsServeHTTP(t *testing.T) {
-
+	t.Skip("not implemented yet")
 }
