@@ -1,0 +1,17 @@
+{
+  // Run and debug the services on the host (F5). Start the infrastructure
+  // first: docker compose up -d
+  // Environment variables come from .env, see .env.example.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "tracker-api",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/tracker-api",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env"
+    }
+  ]
+}

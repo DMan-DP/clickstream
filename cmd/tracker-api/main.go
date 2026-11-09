@@ -17,12 +17,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func run(logger *slog.Logger) error {
-	cfg, err := config.GetConfig()
-	if err != nil {
-		return fmt.Errorf("config: %w", err)
-	}
-
+func run(logger *slog.Logger, cfg *config.Config) error {
 	eventsService := service.NewEvents(logger.With("component", "event-service"))
 	eventsHandler := handler.NewEvents(logger.With("component", "event-handler"), eventsService)
 
@@ -74,11 +69,19 @@ func run(logger *slog.Logger) error {
 }
 
 func main() {
-	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+	var lvl slog.LevelVar
+	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &lvl})
 	logger := slog.New(h)
 	slog.SetDefault(logger)
 
-	err := run(logger)
+	cfg, err := config.GetConfig()
+	if err != nil {
+		logger.Error("config load failed", "err", err)
+		os.Exit(1)
+	}
+	lvl.Set(cfg.LogLevel)
+
+	err = run(logger, cfg)
 	if err != nil {
 		logger.Error("run failed", "err", err)
 		os.Exit(1)

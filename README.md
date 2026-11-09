@@ -94,6 +94,10 @@ You need Docker and Go.
 
 3. Run `tracker-api` on the host. The environment variables are described in `.env.example`.
 
+   VS Code: the `tracker-api` launch configuration (F5) takes the variables from `.env` and runs the service under the debugger.
+
+   Or from the terminal, setting the variables by hand.
+
    Bash:
 
    ```
