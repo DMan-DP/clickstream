@@ -10,11 +10,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/DMan-DP/clickstream/internal/tracker/service"
 )
@@ -82,25 +83,8 @@ func TestDecodeBatch(t *testing.T) {
 		}
 
 		for _, e := range fixtureEvents {
-			got := req.Events[e.idx]
-			if got.ID != e.want.ID {
-				t.Errorf("decodeBatch() Events[%d].ID = %q, want %q", e.idx, got.ID, e.want.ID)
-			}
-
-			if got.Type != e.want.Type {
-				t.Errorf("decodeBatch() Events[%d].Type = %q, want %q", e.idx, got.Type, e.want.Type)
-			}
-
-			if got.ElementID != e.want.ElementID {
-				t.Errorf("decodeBatch() Events[%d].ElementID = %q, want %q", e.idx, got.ElementID, e.want.ElementID)
-			}
-
-			if !equalStringPtr(got.Value, e.want.Value) {
-				t.Errorf("decodeBatch() Events[%d].Value = %v, want %v", e.idx, formatStringPtr(got.Value), formatStringPtr(e.want.Value))
-			}
-
-			if !got.ClientTS.Equal(e.want.ClientTS) {
-				t.Errorf("decodeBatch() Events[%d].ClientTS = %v, want %v", e.idx, got.ClientTS, e.want.ClientTS)
+			if diff := cmp.Diff(e.want, req.Events[e.idx]); diff != "" {
+				t.Errorf("decodeBatch() Events[%d] mismatch (-want +got):\n%s", e.idx, diff)
 			}
 		}
 	})
@@ -253,9 +237,8 @@ func TestDecodeBatch(t *testing.T) {
 				t.Fatalf("decodeBatch() len(Events) = %d, want %d", len(req.Events), eventsCount)
 			}
 
-			value := req.Events[0].Value
-			if !equalStringPtr(value, tc.wantValue) {
-				t.Fatalf("decodeBatch() Events[0].Value = %v, want %v", formatStringPtr(value), formatStringPtr(tc.wantValue))
+			if diff := cmp.Diff(tc.wantValue, req.Events[0].Value); diff != "" {
+				t.Fatalf("decodeBatch() Events[0].Value mismatch (-want +got):\n%s", diff)
 			}
 
 			if req.SessionID != tc.wantSessionID {
@@ -263,21 +246,6 @@ func TestDecodeBatch(t *testing.T) {
 			}
 		})
 	}
-}
-
-func equalStringPtr(a, b *string) bool {
-	if a == b {
-		return true
-	}
-	return a != nil && b != nil && *a == *b
-}
-
-func formatStringPtr(s *string) string {
-	if s == nil {
-		return "nil"
-	}
-
-	return strconv.Quote(*s)
 }
 
 func TestBatchRequestValidate(t *testing.T) {
@@ -665,31 +633,7 @@ func TestEventsServeHTTPPassesBatch(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
 	}
 
-	got := stub.got
-	if got.SessionID != want.SessionID {
-		t.Errorf("SessionID = %v, want %v", got.SessionID, want.SessionID)
-	}
-
-	if len(got.Events) != len(want.Events) {
-		t.Fatalf("len(Events) = %d, want %d", len(got.Events), len(want.Events))
-	}
-
-	for i, w := range want.Events {
-		g := got.Events[i]
-		if g.ID != w.ID {
-			t.Errorf("Events[%d].ID = %q, want %q", i, g.ID, w.ID)
-		}
-		if g.Type != w.Type {
-			t.Errorf("Events[%d].Type = %q, want %q", i, g.Type, w.Type)
-		}
-		if g.ElementID != w.ElementID {
-			t.Errorf("Events[%d].ElementID = %q, want %q", i, g.ElementID, w.ElementID)
-		}
-		if !equalStringPtr(g.Value, w.Value) {
-			t.Errorf("Events[%d].Value = %s, want %s", i, formatStringPtr(g.Value), formatStringPtr(w.Value))
-		}
-		if !g.ClientTS.Equal(w.ClientTS) {
-			t.Errorf("Events[%d].ClientTS = %v, want %v", i, g.ClientTS, w.ClientTS)
-		}
+	if diff := cmp.Diff(want, stub.got); diff != "" {
+		t.Errorf("batch passed to service mismatch (-want +got):\n%s", diff)
 	}
 }
