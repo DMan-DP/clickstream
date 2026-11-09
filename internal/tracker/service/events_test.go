@@ -8,9 +8,12 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/DMan-DP/clickstream/internal/message"
+	"github.com/google/go-cmp/cmp"
 )
 
-// validEvent returns an event that passes validateEvent. Each case
+// validEvent returns an event that eventToMessage accepts. Each case
 // changes one field of it to check a single rule.
 func validEvent() Event {
 	return Event{
@@ -22,30 +25,58 @@ func validEvent() Event {
 	}
 }
 
-func TestValidateEvent(t *testing.T) {
+// validMessage returns the message eventToMessage builds from validEvent
+// with the given session id and server time. Cases change only the fields
+// that differ from it.
+func validMessage(sessionID uuid.UUID, serverTS time.Time) message.Event {
+	return message.Event{
+		EventID:   uuid.MustParse("05d4eec3-a4ce-465e-91fc-562da38b0c45"),
+		SessionID: sessionID,
+		Type:      "click",
+		ElementID: "order-button",
+		Value:     nil,
+		ClientTS:  time.Date(2026, 11, 6, 10, 15, 0, 0, time.UTC),
+		ServerTS:  serverTS,
+	}
+}
+
+func TestEventToMessage(t *testing.T) {
+	sessionID := uuid.MustParse("7c9e6679-7425-40de-944b-e07fc1f90ae7")
+	serverTS := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	// Shared by the input and the expected message, so both hold the same
+	// *time.Location.
+	clientTSPlus3 := time.Date(2026, 11, 6, 13, 15, 0, 0, time.FixedZone("UTC+3", 3*60*60))
+
 	tests := []struct {
-		name    string
-		mutate  func(e *Event)
+		name   string
+		mutate func(e *Event)
+		// wantMsg changes validMessage into the expected result. nil means
+		// the result equals validMessage. Not used when wantErr is set.
+		wantMsg func(m *message.Event)
 		wantErr error
 	}{
 		{
 			name:    "valid",
 			mutate:  func(*Event) {},
+			wantMsg: nil,
 			wantErr: nil,
 		},
 		{
 			name:    "valid with value",
 			mutate:  func(e *Event) { e.Value = new("pepperoni") },
+			wantMsg: func(m *message.Event) { m.Value = new("pepperoni") },
 			wantErr: nil,
 		},
 		{
 			// Value length is not checked here, Ingest clears long values.
 			name:    "valid with value longer than 64 runes",
 			mutate:  func(e *Event) { e.Value = new(strings.Repeat("я", 65)) },
+			wantMsg: func(m *message.Event) { m.Value = new(strings.Repeat("я", 65)) },
 			wantErr: nil,
 		},
 
-		// event_id: all forms accepted by uuid.Parse, any case.
+		// event_id: all forms accepted by uuid.Parse, any case. wantMsg is nil:
+		// every form must give the same EventID as validMessage.
 		{
 			name:    "event_id upper case",
 			mutate:  func(e *Event) { e.ID = "05D4EEC3-A4CE-465E-91FC-562DA38B0C45" },
@@ -91,31 +122,37 @@ func TestValidateEvent(t *testing.T) {
 		{
 			name:    "type click",
 			mutate:  func(e *Event) { e.Type = "click" },
+			wantMsg: func(m *message.Event) { m.Type = "click" },
 			wantErr: nil,
 		},
 		{
 			name:    "type input",
 			mutate:  func(e *Event) { e.Type = "input" },
+			wantMsg: func(m *message.Event) { m.Type = "input" },
 			wantErr: nil,
 		},
 		{
 			name:    "type change",
 			mutate:  func(e *Event) { e.Type = "change" },
+			wantMsg: func(m *message.Event) { m.Type = "change" },
 			wantErr: nil,
 		},
 		{
 			name:    "type focus",
 			mutate:  func(e *Event) { e.Type = "focus" },
+			wantMsg: func(m *message.Event) { m.Type = "focus" },
 			wantErr: nil,
 		},
 		{
 			name:    "type blur",
 			mutate:  func(e *Event) { e.Type = "blur" },
+			wantMsg: func(m *message.Event) { m.Type = "blur" },
 			wantErr: nil,
 		},
 		{
 			name:    "type submit",
 			mutate:  func(e *Event) { e.Type = "submit" },
+			wantMsg: func(m *message.Event) { m.Type = "submit" },
 			wantErr: nil,
 		},
 		{
@@ -123,6 +160,10 @@ func TestValidateEvent(t *testing.T) {
 			mutate: func(e *Event) {
 				e.Type = "page_view"
 				e.ElementID = "page"
+			},
+			wantMsg: func(m *message.Event) {
+				m.Type = "page_view"
+				m.ElementID = "page"
 			},
 			wantErr: nil,
 		},
@@ -142,16 +183,45 @@ func TestValidateEvent(t *testing.T) {
 			wantErr: errUnknownType,
 		},
 
-		// element_id: required, up to 64 runes. validateEvent gets it already
-		// trimmed by Ingest, whitespace handling is covered in TestIngest.
+		// element_id: required, up to 64 runes. Surrounding whitespace is
+		// trimmed before the checks, inner whitespace is kept.
 		{
 			name:    "element_id empty",
 			mutate:  func(e *Event) { e.ElementID = "" },
 			wantErr: errEmptyElementID,
 		},
 		{
+			name:    "element_id spaces only",
+			mutate:  func(e *Event) { e.ElementID = "   " },
+			wantErr: errEmptyElementID,
+		},
+		{
+			name:    "element_id tab and newline only",
+			mutate:  func(e *Event) { e.ElementID = "\t\n" },
+			wantErr: errEmptyElementID,
+		},
+		{
+			name:    "element_id surrounding spaces trimmed",
+			mutate:  func(e *Event) { e.ElementID = "  order-button  " },
+			wantMsg: func(m *message.Event) { m.ElementID = "order-button" },
+			wantErr: nil,
+		},
+		{
+			name:    "element_id surrounding tab and newline trimmed",
+			mutate:  func(e *Event) { e.ElementID = "\torder-button\n" },
+			wantMsg: func(m *message.Event) { m.ElementID = "order-button" },
+			wantErr: nil,
+		},
+		{
+			name:    "element_id inner space kept",
+			mutate:  func(e *Event) { e.ElementID = " order button " },
+			wantMsg: func(m *message.Event) { m.ElementID = "order button" },
+			wantErr: nil,
+		},
+		{
 			name:    "element_id 64 latin",
 			mutate:  func(e *Event) { e.ElementID = strings.Repeat("a", 64) },
+			wantMsg: func(m *message.Event) { m.ElementID = strings.Repeat("a", 64) },
 			wantErr: nil,
 		},
 		{
@@ -160,9 +230,17 @@ func TestValidateEvent(t *testing.T) {
 			wantErr: errTooLongElementID,
 		},
 		{
+			// 64 runes after trimming: the limit applies to the trimmed value.
+			name:    "element_id 64 latin with surrounding spaces",
+			mutate:  func(e *Event) { e.ElementID = " " + strings.Repeat("a", 64) + " " },
+			wantMsg: func(m *message.Event) { m.ElementID = strings.Repeat("a", 64) },
+			wantErr: nil,
+		},
+		{
 			// 64 runes, 128 bytes: the limit counts runes, not bytes.
 			name:    "element_id 64 cyrillic",
 			mutate:  func(e *Event) { e.ElementID = strings.Repeat("я", 64) },
+			wantMsg: func(m *message.Event) { m.ElementID = strings.Repeat("я", 64) },
 			wantErr: nil,
 		},
 		{
@@ -184,10 +262,10 @@ func TestValidateEvent(t *testing.T) {
 			wantErr: errEmptyClientTS,
 		},
 		{
-			name: "client_ts non-UTC zone",
-			mutate: func(e *Event) {
-				e.ClientTS = time.Date(2026, 11, 6, 13, 15, 0, 0, time.FixedZone("UTC+3", 3*60*60))
-			},
+			// The client zone is kept as sent, only ServerTS is UTC.
+			name:    "client_ts non-UTC zone",
+			mutate:  func(e *Event) { e.ClientTS = clientTSPlus3 },
+			wantMsg: func(m *message.Event) { m.ClientTS = clientTSPlus3 },
 			wantErr: nil,
 		},
 
@@ -223,9 +301,22 @@ func TestValidateEvent(t *testing.T) {
 			e := validEvent()
 			tc.mutate(&e)
 
-			err := validateEvent(e)
+			msg, err := eventToMessage(e, sessionID, serverTS)
 			if !errors.Is(err, tc.wantErr) {
-				t.Errorf("validateEvent() error = %v, want %v", err, tc.wantErr)
+				t.Fatalf("eventToMessage() error = %v, want %v", err, tc.wantErr)
+			}
+
+			if tc.wantErr != nil {
+				return
+			}
+
+			want := validMessage(sessionID, serverTS)
+			if tc.wantMsg != nil {
+				tc.wantMsg(&want)
+			}
+
+			if diff := cmp.Diff(want, msg); diff != "" {
+				t.Errorf("eventToMessage() (-want +got): %+v", diff)
 			}
 		})
 	}

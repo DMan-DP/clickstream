@@ -9,6 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 	"uuid"
+
+	"github.com/DMan-DP/clickstream/internal/message"
 )
 
 const (
@@ -81,11 +83,11 @@ func NewEvents(logger *slog.Logger) *Events {
 func (s *Events) Ingest(ctx context.Context, batch Batch) (IngestResult, error) {
 	serverTS := s.now().UTC()
 	var res IngestResult
+	msgs := make([]message.Event, 0, len(batch.Events))
 
 	for _, e := range batch.Events {
-		e.ElementID = strings.TrimSpace(e.ElementID)
-
-		if err := validateEvent(e); err != nil {
+		msg, err := eventToMessage(e, batch.SessionID, serverTS)
+		if err != nil {
 			s.logger.WarnContext(ctx, "invalid event",
 				"session_id", batch.SessionID,
 				"event_id", e.ID,
@@ -95,57 +97,68 @@ func (s *Events) Ingest(ctx context.Context, batch Batch) (IngestResult, error) 
 			continue
 		}
 
-		if valueTooLong(e.Value) {
+		if valueTooLong(msg.Value) {
 			s.logger.WarnContext(ctx, "value cleared",
-				"session_id", batch.SessionID,
-				"event_id", e.ID,
-				"value_runes", utf8.RuneCountInString(*e.Value),
+				"session_id", msg.SessionID,
+				"event_id", msg.EventID,
+				"value_runes", utf8.RuneCountInString(*msg.Value),
 				"limit", maxValueRunes,
 			)
-			e.Value = nil
+			msg.Value = nil
 		}
 
 		s.logger.DebugContext(ctx, "accepted event",
-			"session_id", batch.SessionID,
-			"event_id", e.ID,
-			"event_type", e.Type,
-			"element_id", e.ElementID,
-			"value", e.Value,
+			"session_id", msg.SessionID,
+			"event_id", msg.EventID,
+			"event_type", msg.Type,
+			"element_id", msg.ElementID,
+			"value", msg.Value,
 			"server_ts", serverTS,
 		)
+		msgs = append(msgs, msg)
 		res.Accepted++
 	}
 
 	return res, nil
 }
 
-func validateEvent(e Event) error {
+func eventToMessage(e Event, sessionID uuid.UUID, serverTS time.Time) (message.Event, error) {
+	e.ElementID = strings.TrimSpace(e.ElementID)
+
 	id, err := uuid.Parse(e.ID)
 	if err != nil {
-		return fmt.Errorf("validate event: %w: %q: %v", errInvalidEventID, e.ID, err)
+		return message.Event{}, fmt.Errorf("event to message: %w: %q: %v", errInvalidEventID, e.ID, err)
 	}
 
 	if id == uuid.Nil() {
-		return fmt.Errorf("validate event: %w: %q", errInvalidEventID, e.ID)
+		return message.Event{}, fmt.Errorf("event to message: %w: %q", errInvalidEventID, e.ID)
 	}
 
 	if _, ok := allowedTypes[e.Type]; !ok {
-		return fmt.Errorf("validate event: %w: %q", errUnknownType, e.Type)
+		return message.Event{}, fmt.Errorf("event to message: %w: %q", errUnknownType, e.Type)
 	}
 
 	if e.ElementID == "" {
-		return fmt.Errorf("validate event: %w: %q", errEmptyElementID, e.ElementID)
+		return message.Event{}, fmt.Errorf("event to message: %w: %q", errEmptyElementID, e.ElementID)
 	}
 
 	if utf8.RuneCountInString(e.ElementID) > maxElementIDRunes {
-		return fmt.Errorf("validate event: %w: got %d max %d", errTooLongElementID, utf8.RuneCountInString(e.ElementID), maxElementIDRunes)
+		return message.Event{}, fmt.Errorf("event to message: %w: got %d max %d", errTooLongElementID, utf8.RuneCountInString(e.ElementID), maxElementIDRunes)
 	}
 
 	if e.ClientTS.IsZero() {
-		return fmt.Errorf("validate event: %w", errEmptyClientTS)
+		return message.Event{}, fmt.Errorf("event to message: %w", errEmptyClientTS)
 	}
 
-	return nil
+	return message.Event{
+		EventID:   id,
+		SessionID: sessionID,
+		Type:      e.Type,
+		ElementID: e.ElementID,
+		Value:     e.Value,
+		ClientTS:  e.ClientTS,
+		ServerTS:  serverTS,
+	}, nil
 }
 
 func valueTooLong(v *string) bool {
