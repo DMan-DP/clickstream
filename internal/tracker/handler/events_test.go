@@ -1,8 +1,13 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"slices"
 	"strconv"
@@ -10,6 +15,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/DMan-DP/clickstream/internal/tracker/service"
 )
 
 var fixtureSessionID = uuid.MustParse("3ed98b41-6ae1-430e-8a3d-9945cbbe1c29")
@@ -388,6 +395,301 @@ func TestValidationMessage(t *testing.T) {
 	}
 }
 
+// stubIngester returns a preset result and remembers the batch it got.
+type stubIngester struct {
+	result service.IngestResult
+	err    error
+	called bool
+	got    service.Batch
+}
+
+func (s *stubIngester) Ingest(_ context.Context, batch service.Batch) (service.IngestResult, error) {
+	s.called = true
+	s.got = batch
+	return s.result, s.err
+}
+
+// batchJSON returns a request body with n valid events.
+func batchJSON(sessionID string, n int) string {
+	events := make([]string, 0, n)
+	for i := range n {
+		events = append(events, fmt.Sprintf(
+			`{"event_id":"00000000-0000-4000-8000-%012d","type":"click","element_id":"btn","client_ts":"2026-11-06T10:15:00Z"}`,
+			i+1,
+		))
+	}
+
+	return fmt.Sprintf(`{"session_id":%q,"events":[%s]}`, sessionID, strings.Join(events, ","))
+}
+
 func TestEventsServeHTTP(t *testing.T) {
-	t.Skip("not implemented yet")
+	validBody := batchJSON(fixtureSessionID.String(), 3)
+
+	tests := []struct {
+		name         string
+		body         string
+		ingestResult service.IngestResult
+		ingestErr    error
+
+		wantStatus int
+		wantCalled bool
+		// Exactly one of the three is checked: a 202 body, an error body
+		// or no body at all.
+		wantResponse  *batchResponse
+		wantError     string
+		wantEmptyBody bool
+	}{
+		// Success.
+		{
+			name:         "valid batch",
+			body:         validBody,
+			ingestResult: service.IngestResult{Accepted: 2, Skipped: 1},
+			wantStatus:   http.StatusAccepted,
+			wantCalled:   true,
+			wantResponse: &batchResponse{Accepted: 2, Skipped: 1},
+		},
+		{
+			name:         "all events skipped",
+			body:         validBody,
+			ingestResult: service.IngestResult{Accepted: 0, Skipped: 3},
+			wantStatus:   http.StatusAccepted,
+			wantCalled:   true,
+			wantResponse: &batchResponse{Accepted: 0, Skipped: 3},
+		},
+		{
+			name:         "max batch size",
+			body:         batchJSON(fixtureSessionID.String(), maxBatchSize),
+			ingestResult: service.IngestResult{Accepted: maxBatchSize},
+			wantStatus:   http.StatusAccepted,
+			wantCalled:   true,
+			wantResponse: &batchResponse{Accepted: maxBatchSize},
+		},
+
+		// Request level: the service is not called.
+		{
+			name:       "malformed JSON",
+			body:       `{"session_id":`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "Bad request",
+		},
+		{
+			name:       "empty body",
+			body:       "",
+			wantStatus: http.StatusBadRequest,
+			wantError:  "Bad request",
+		},
+		{
+			name:       "trailing data after object",
+			body:       validBody + `{}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "Bad request",
+		},
+		{
+			// Also checks that decodeBatch keeps *http.MaxBytesError in the chain.
+			name:       "body larger than limit",
+			body:       "{" + strings.Repeat(" ", maxBodyBytes) + "}",
+			wantStatus: http.StatusRequestEntityTooLarge,
+			wantError:  "Request entity too large",
+		},
+		{
+			name:       "session_id malformed",
+			body:       batchJSON("not-a-uuid", 1),
+			wantStatus: http.StatusBadRequest,
+			wantError:  "Bad request",
+		},
+		{
+			name:       "session_id nil",
+			body:       batchJSON("00000000-0000-0000-0000-000000000000", 1),
+			wantStatus: http.StatusBadRequest,
+			wantError:  "session_id is missing or invalid",
+		},
+		{
+			name:       "session_id missing",
+			body:       `{"events":[{"event_id":"00000000-0000-4000-8000-000000000001","type":"click","element_id":"btn","client_ts":"2026-11-06T10:15:00Z"}]}`,
+			wantStatus: http.StatusBadRequest,
+			wantError:  "session_id is missing or invalid",
+		},
+		{
+			name:       "no events",
+			body:       batchJSON(fixtureSessionID.String(), 0),
+			wantStatus: http.StatusBadRequest,
+			wantError:  "No events",
+		},
+		{
+			name:       "events missing",
+			body:       fmt.Sprintf(`{"session_id":%q}`, fixtureSessionID.String()),
+			wantStatus: http.StatusBadRequest,
+			wantError:  "No events",
+		},
+		{
+			name:       "too many events",
+			body:       batchJSON(fixtureSessionID.String(), maxBatchSize+1),
+			wantStatus: http.StatusBadRequest,
+			wantError:  fmt.Sprintf("Too many events, max %d", maxBatchSize),
+		},
+
+		// Service errors.
+		{
+			name:       "ingest deadline exceeded",
+			body:       validBody,
+			ingestErr:  context.DeadlineExceeded,
+			wantStatus: http.StatusServiceUnavailable,
+			wantCalled: true,
+			wantError:  "Service unavailable",
+		},
+		{
+			// errors.Is must see through wrapping.
+			name:       "ingest deadline exceeded wrapped",
+			body:       validBody,
+			ingestErr:  fmt.Errorf("publish batch: %w", context.DeadlineExceeded),
+			wantStatus: http.StatusServiceUnavailable,
+			wantCalled: true,
+			wantError:  "Service unavailable",
+		},
+		{
+			name:       "ingest unexpected error",
+			body:       validBody,
+			ingestErr:  errors.New("boom"),
+			wantStatus: http.StatusInternalServerError,
+			wantCalled: true,
+			wantError:  "Internal server error",
+		},
+		{
+			// Nothing is written when the client is gone, so the recorder
+			// keeps its default 200.
+			name:          "ingest client gone",
+			body:          validBody,
+			ingestErr:     fmt.Errorf("publish batch: %w", context.Canceled),
+			wantStatus:    http.StatusOK,
+			wantCalled:    true,
+			wantEmptyBody: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &stubIngester{result: tc.ingestResult, err: tc.ingestErr}
+			h := NewEvents(slog.New(slog.DiscardHandler), stub)
+
+			req := httptest.NewRequest(http.MethodPost, "/events", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+
+			h.ServeHTTP(rec, req)
+
+			res := rec.Result()
+			defer res.Body.Close()
+
+			if res.StatusCode != tc.wantStatus {
+				t.Errorf("status = %d, want %d", res.StatusCode, tc.wantStatus)
+			}
+
+			if stub.called != tc.wantCalled {
+				t.Errorf("Ingest called = %v, want %v", stub.called, tc.wantCalled)
+			}
+
+			if tc.wantEmptyBody {
+				if rec.Body.Len() != 0 {
+					t.Errorf("body = %q, want empty", rec.Body.String())
+				}
+				return
+			}
+
+			if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+				t.Errorf("Content-Type = %q, want application/json", ct)
+			}
+
+			dec := json.NewDecoder(res.Body)
+
+			if tc.wantResponse != nil {
+				var got batchResponse
+				if err := dec.Decode(&got); err != nil {
+					t.Fatalf("decode response body: %v", err)
+				}
+				if got != *tc.wantResponse {
+					t.Errorf("body = %+v, want %+v", got, *tc.wantResponse)
+				}
+				return
+			}
+
+			var got errorResponse
+			if err := dec.Decode(&got); err != nil {
+				t.Fatalf("decode error body: %v", err)
+			}
+			if got.Error != tc.wantError {
+				t.Errorf("error = %q, want %q", got.Error, tc.wantError)
+			}
+		})
+	}
+}
+
+// TestEventsServeHTTPPassesBatch checks that the request is passed to the
+// service field by field.
+func TestEventsServeHTTPPassesBatch(t *testing.T) {
+	body := fmt.Sprintf(`{
+		"session_id": %q,
+		"events": [
+			{"event_id": "05d4eec3-a4ce-465e-91fc-562da38b0c45", "type": "change", "element_id": "pizza-select", "value": "pepperoni", "client_ts": "2026-11-06T10:15:03.640Z"},
+			{"event_id": "06c328fa-970b-49a7-bd43-73ded3f0e901", "type": "submit", "element_id": "order-form", "client_ts": "2026-11-06T10:15:14.525Z"}
+		]
+	}`, fixtureSessionID.String())
+
+	want := service.Batch{
+		SessionID: fixtureSessionID,
+		Events: []service.Event{
+			{
+				ID:        "05d4eec3-a4ce-465e-91fc-562da38b0c45",
+				Type:      "change",
+				ElementID: "pizza-select",
+				Value:     new("pepperoni"),
+				ClientTS:  time.Date(2026, 11, 6, 10, 15, 3, 640_000_000, time.UTC),
+			},
+			{
+				ID:        "06c328fa-970b-49a7-bd43-73ded3f0e901",
+				Type:      "submit",
+				ElementID: "order-form",
+				Value:     nil,
+				ClientTS:  time.Date(2026, 11, 6, 10, 15, 14, 525_000_000, time.UTC),
+			},
+		},
+	}
+
+	stub := &stubIngester{result: service.IngestResult{Accepted: 2}}
+	h := NewEvents(slog.New(slog.DiscardHandler), stub)
+
+	req := httptest.NewRequest(http.MethodPost, "/events", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
+	}
+
+	got := stub.got
+	if got.SessionID != want.SessionID {
+		t.Errorf("SessionID = %v, want %v", got.SessionID, want.SessionID)
+	}
+
+	if len(got.Events) != len(want.Events) {
+		t.Fatalf("len(Events) = %d, want %d", len(got.Events), len(want.Events))
+	}
+
+	for i, w := range want.Events {
+		g := got.Events[i]
+		if g.ID != w.ID {
+			t.Errorf("Events[%d].ID = %q, want %q", i, g.ID, w.ID)
+		}
+		if g.Type != w.Type {
+			t.Errorf("Events[%d].Type = %q, want %q", i, g.Type, w.Type)
+		}
+		if g.ElementID != w.ElementID {
+			t.Errorf("Events[%d].ElementID = %q, want %q", i, g.ElementID, w.ElementID)
+		}
+		if !equalStringPtr(g.Value, w.Value) {
+			t.Errorf("Events[%d].Value = %s, want %s", i, formatStringPtr(g.Value), formatStringPtr(w.Value))
+		}
+		if !g.ClientTS.Equal(w.ClientTS) {
+			t.Errorf("Events[%d].ClientTS = %v, want %v", i, g.ClientTS, w.ClientTS)
+		}
+	}
 }

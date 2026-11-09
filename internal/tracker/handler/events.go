@@ -30,38 +30,79 @@ type ingester interface {
 }
 
 type Events struct {
-	logger        *slog.Logger
-	eventsService ingester
+	logger  *slog.Logger
+	service ingester
 }
 
 func NewEvents(logger *slog.Logger, eventsService ingester) *Events {
 	return &Events{
-		logger:        logger,
-		eventsService: eventsService,
+		logger:  logger,
+		service: eventsService,
 	}
 }
 
 func (h *Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	ctx := r.Context()
 
 	req, err := decodeBatch(r.Body)
 	if err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			writeError(w, http.StatusRequestEntityTooLarge, "Request entity too large")
-			h.logger.Warn("bad request", "err", err)
+			h.logger.WarnContext(ctx, "bad request", "err", err)
 			return
 		}
 
-		h.logger.Warn("bad request", "err", err)
+		h.logger.WarnContext(ctx, "bad request", "err", err)
 		writeError(w, http.StatusBadRequest, "Bad request")
 		return
 	}
 
 	if err := validate(req); err != nil {
-		h.logger.Warn("bad request", "err", err)
+		h.logger.WarnContext(ctx, "bad request", "err", err)
 		writeError(w, http.StatusBadRequest, validationMessage(err))
 		return
 	}
+
+	batch := toServiceBatch(req)
+	result, err := h.service.Ingest(ctx, batch)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.Canceled):
+			h.logger.InfoContext(ctx, "client gone",
+				"session_id", req.SessionID,
+				"err", err,
+			)
+			return
+		case errors.Is(err, context.DeadlineExceeded):
+			h.logger.ErrorContext(ctx, "ingest timeout",
+				"events_count", len(req.Events),
+				"session_id", req.SessionID,
+				"err", err,
+			)
+			writeError(w, http.StatusServiceUnavailable, "Service unavailable")
+			return
+		default:
+			h.logger.ErrorContext(ctx, "ingest failed",
+				"events_count", len(req.Events),
+				"session_id", req.SessionID,
+				"err", err,
+			)
+			writeError(w, http.StatusInternalServerError, "Internal server error")
+			return
+		}
+	}
+
+	res := batchResponse{
+		Accepted: result.Accepted,
+		Skipped:  result.Skipped,
+	}
+	writeJSON(w, http.StatusAccepted, res)
+	h.logger.InfoContext(ctx, "batch accepted",
+		"session_id", req.SessionID,
+		"accepted", result.Accepted,
+		"skipped", result.Skipped,
+	)
 }
 
 func decodeBatch(r io.Reader) (batchRequest, error) {
@@ -127,4 +168,29 @@ type eventRequest struct {
 	ElementID string    `json:"element_id"`
 	Value     *string   `json:"value"`
 	ClientTS  time.Time `json:"client_ts"`
+}
+
+type batchResponse struct {
+	Accepted int `json:"accepted"`
+	Skipped  int `json:"skipped"`
+}
+
+func toServiceBatch(req batchRequest) service.Batch {
+	batch := service.Batch{
+		SessionID: req.SessionID,
+		Events:    make([]service.Event, 0, len(req.Events)),
+	}
+
+	for _, reqE := range req.Events {
+		batchE := service.Event{
+			ID:        reqE.ID,
+			Type:      reqE.Type,
+			ElementID: reqE.ElementID,
+			Value:     reqE.Value,
+			ClientTS:  reqE.ClientTS,
+		}
+		batch.Events = append(batch.Events, batchE)
+	}
+
+	return batch
 }
