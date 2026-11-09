@@ -12,14 +12,16 @@ import (
 )
 
 const (
-	maxValueRunes = 64
+	maxValueRunes     = 64
+	maxElementIDRunes = 64
 )
 
 var (
-	errInvalidEventID = errors.New("event_id is not a valid UUID")
-	errUnknownType    = errors.New("unknown event type")
-	errEmptyElementID = errors.New("element_id is missing")
-	errEmptyClientTS  = errors.New("client_ts is missing")
+	errInvalidEventID   = errors.New("event_id is not a valid UUID")
+	errUnknownType      = errors.New("unknown event type")
+	errEmptyElementID   = errors.New("element_id is missing")
+	errTooLongElementID = errors.New("element_id is too long")
+	errEmptyClientTS    = errors.New("client_ts is missing")
 )
 
 // allowedTypes is the whitelist of event types. Matching is case sensitive.
@@ -77,10 +79,12 @@ func NewEvents(logger *slog.Logger) *Events {
 // accepts the rest. A non-nil error means the batch was not accepted
 // as a whole and the client should retry it.
 func (s *Events) Ingest(ctx context.Context, batch Batch) (IngestResult, error) {
-	serverTS := s.now()
+	serverTS := s.now().UTC()
 	var res IngestResult
 
 	for _, e := range batch.Events {
+		e.ElementID = strings.TrimSpace(e.ElementID)
+
 		if err := validateEvent(e); err != nil {
 			s.logger.WarnContext(ctx, "invalid event",
 				"session_id", batch.SessionID,
@@ -129,8 +133,12 @@ func validateEvent(e Event) error {
 		return fmt.Errorf("validate event: %w: %q", errUnknownType, e.Type)
 	}
 
-	if strings.TrimSpace(e.ElementID) == "" {
+	if e.ElementID == "" {
 		return fmt.Errorf("validate event: %w: %q", errEmptyElementID, e.ElementID)
+	}
+
+	if utf8.RuneCountInString(e.ElementID) > maxElementIDRunes {
+		return fmt.Errorf("validate event: %w: got %d max %d", errTooLongElementID, utf8.RuneCountInString(e.ElementID), maxElementIDRunes)
 	}
 
 	if e.ClientTS.IsZero() {

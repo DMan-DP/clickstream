@@ -57,6 +57,7 @@ Request `POST /events`:
 ```
 
 - `type`: `click`, `input`, `change`, `focus`, `blur`, `submit`, `page_view`. Events of an unknown type are skipped, the rest of the batch is accepted.
+- `element_id` is required. Surrounding whitespace is trimmed, the result must be 1 to 64 characters, otherwise the event is skipped.
 - `value` is optional: the value of a slider, dropdown, checkbox or radio button. For text fields only the input length is sent, the text itself never leaves the page.
 - A batch holds up to 100 events, the request body is limited to 64 KB.
 

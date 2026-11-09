@@ -142,21 +142,33 @@ func TestValidateEvent(t *testing.T) {
 			wantErr: errUnknownType,
 		},
 
-		// element_id: required, whitespace only counts as empty.
+		// element_id: required, up to 64 runes. validateEvent gets it already
+		// trimmed by Ingest, whitespace handling is covered in TestIngest.
 		{
 			name:    "element_id empty",
 			mutate:  func(e *Event) { e.ElementID = "" },
 			wantErr: errEmptyElementID,
 		},
 		{
-			name:    "element_id spaces only",
-			mutate:  func(e *Event) { e.ElementID = "   " },
-			wantErr: errEmptyElementID,
+			name:    "element_id 64 latin",
+			mutate:  func(e *Event) { e.ElementID = strings.Repeat("a", 64) },
+			wantErr: nil,
 		},
 		{
-			name:    "element_id tabs and newlines only",
-			mutate:  func(e *Event) { e.ElementID = "\t\n" },
-			wantErr: errEmptyElementID,
+			name:    "element_id 65 latin",
+			mutate:  func(e *Event) { e.ElementID = strings.Repeat("a", 65) },
+			wantErr: errTooLongElementID,
+		},
+		{
+			// 64 runes, 128 bytes: the limit counts runes, not bytes.
+			name:    "element_id 64 cyrillic",
+			mutate:  func(e *Event) { e.ElementID = strings.Repeat("я", 64) },
+			wantErr: nil,
+		},
+		{
+			name:    "element_id 65 cyrillic",
+			mutate:  func(e *Event) { e.ElementID = strings.Repeat("я", 65) },
+			wantErr: errTooLongElementID,
 		},
 
 		// client_ts: required; absent and null decode to the zero time.
@@ -364,6 +376,37 @@ func TestIngest(t *testing.T) {
 				eventWith(func(e *Event) { e.Value = new(strings.Repeat("я", 65)) }),
 			},
 			want: IngestResult{Accepted: 1, Skipped: 0},
+		},
+		{
+			// element_id is trimmed before validation: whitespace only is empty.
+			name: "element_id whitespace only skipped",
+			events: []Event{
+				eventWith(func(e *Event) { e.ElementID = "   " }),
+				eventWith(func(e *Event) { e.ElementID = "\t\n" }),
+			},
+			want: IngestResult{Accepted: 0, Skipped: 2},
+		},
+		{
+			name: "element_id with surrounding spaces accepted",
+			events: []Event{
+				eventWith(func(e *Event) { e.ElementID = "  order-button  " }),
+			},
+			want: IngestResult{Accepted: 1, Skipped: 0},
+		},
+		{
+			// 64 runes after trimming: the limit applies to the trimmed value.
+			name: "element_id at limit with spaces accepted",
+			events: []Event{
+				eventWith(func(e *Event) { e.ElementID = " " + strings.Repeat("a", 64) + " " }),
+			},
+			want: IngestResult{Accepted: 1, Skipped: 0},
+		},
+		{
+			name: "element_id too long skipped",
+			events: []Event{
+				eventWith(func(e *Event) { e.ElementID = strings.Repeat("a", 65) }),
+			},
+			want: IngestResult{Accepted: 0, Skipped: 1},
 		},
 		{
 			// Deduplication is deferred, duplicates within a batch are accepted.
