@@ -23,8 +23,8 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("config: %w", err)
 	}
 
-	eventsService := service.NewEvents()
-	eventsHandler := handler.NewEvents(logger, eventsService)
+	eventsService := service.NewEvents(logger.With("component", "event-service"))
+	eventsHandler := handler.NewEvents(logger.With("component", "event-handler"), eventsService)
 
 	routes := handler.Routes{
 		Events: eventsHandler,
@@ -74,8 +74,9 @@ func run(logger *slog.Logger) error {
 }
 
 func main() {
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
-	logger := slog.New(handler)
+	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger := slog.New(h)
+	slog.SetDefault(logger)
 
 	err := run(logger)
 	if err != nil {

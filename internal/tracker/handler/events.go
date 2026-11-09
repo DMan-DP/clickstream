@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"net/http"
 	"time"
 	"uuid"
+
+	"github.com/DMan-DP/clickstream/internal/tracker/service"
 )
 
 const (
@@ -23,7 +26,7 @@ var (
 )
 
 type ingester interface {
-	Ingest()
+	Ingest(ctx context.Context, batch service.Batch) (service.IngestResult, error)
 }
 
 type Events struct {
@@ -119,8 +122,8 @@ type batchRequest struct {
 }
 
 type eventRequest struct {
-	EventID   string    `json:"event_id"`
-	EventType string    `json:"type"`
+	ID        string    `json:"event_id"`
+	Type      string    `json:"type"`
 	ElementID string    `json:"element_id"`
 	Value     *string   `json:"value"`
 	ClientTS  time.Time `json:"client_ts"`

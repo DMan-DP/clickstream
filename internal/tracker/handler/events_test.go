@@ -25,8 +25,8 @@ func TestDecodeBatch(t *testing.T) {
 		{
 			idx: 0,
 			want: eventRequest{
-				EventID:   "05d4eec3-a4ce-465e-91fc-562da38b0c45",
-				EventType: "page_view",
+				ID:        "05d4eec3-a4ce-465e-91fc-562da38b0c45",
+				Type:      "page_view",
 				ElementID: "page",
 				Value:     nil,
 				ClientTS:  time.Date(2026, 11, 6, 10, 15, 0, 0, time.UTC),
@@ -35,8 +35,8 @@ func TestDecodeBatch(t *testing.T) {
 		{
 			idx: 3,
 			want: eventRequest{
-				EventID:   "4ae9b1e7-e0c0-4ec7-9c64-03748264ed4d",
-				EventType: "change",
+				ID:        "4ae9b1e7-e0c0-4ec7-9c64-03748264ed4d",
+				Type:      "change",
 				ElementID: "pizza-select",
 				Value:     new("pepperoni"),
 				ClientTS:  time.Date(2026, 11, 6, 10, 15, 3, 640_000_000, time.UTC),
@@ -45,8 +45,8 @@ func TestDecodeBatch(t *testing.T) {
 		{
 			idx: 24,
 			want: eventRequest{
-				EventID:   "06c328fa-970b-49a7-bd43-73ded3f0e901",
-				EventType: "submit",
+				ID:        "06c328fa-970b-49a7-bd43-73ded3f0e901",
+				Type:      "submit",
 				ElementID: "order-form",
 				Value:     nil,
 				ClientTS:  time.Date(2026, 11, 6, 10, 15, 14, 525_000_000, time.UTC),
@@ -76,12 +76,12 @@ func TestDecodeBatch(t *testing.T) {
 
 		for _, e := range fixtureEvents {
 			got := req.Events[e.idx]
-			if got.EventID != e.want.EventID {
-				t.Errorf("decodeBatch() Events[%d].EventID = %q, want %q", e.idx, got.EventID, e.want.EventID)
+			if got.ID != e.want.ID {
+				t.Errorf("decodeBatch() Events[%d].ID = %q, want %q", e.idx, got.ID, e.want.ID)
 			}
 
-			if got.EventType != e.want.EventType {
-				t.Errorf("decodeBatch() Events[%d].EventType = %q, want %q", e.idx, got.EventType, e.want.EventType)
+			if got.Type != e.want.Type {
+				t.Errorf("decodeBatch() Events[%d].Type = %q, want %q", e.idx, got.Type, e.want.Type)
 			}
 
 			if got.ElementID != e.want.ElementID {
