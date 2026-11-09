@@ -33,7 +33,8 @@ internal/
   analytics/              analytics-processor code: domain, service, repository, consumer
 migrations/               PostgreSQL schema
 frontend/                 demo page and tracker
-docker-compose.yml        Kafka, kafka-ui, PostgreSQL, topic creation and migrations
+nginx/                    nginx config: serves frontend/, proxies /events to tracker-api
+docker-compose.yml        Kafka, kafka-ui, PostgreSQL, topic creation, migrations, nginx
 ```
 
 ## Event format
@@ -89,6 +90,8 @@ You need Docker and Go.
 
    Compose creates the `user-events` topic with 3 partitions and applies the migrations. The Kafka UI is at http://localhost:8090, PostgreSQL listens on port 5432.
 
+   The demo page is at http://localhost:3000. It is served by nginx, which also proxies `POST /events` to `tracker-api` on the host (`TRACKER_API_URL` in `.env`), so the page and the API share one origin and no CORS is needed. Changes in `frontend/` show up after a page reload, no restart is needed.
+
 3. Run `tracker-api` on the host. The environment variables are described in `.env.example`.
 
    Bash:
@@ -103,7 +106,7 @@ You need Docker and Go.
    $env:KAFKA_BROKERS="localhost:9092"; $env:KAFKA_TOPIC="user-events"; go run ./cmd/tracker-api
    ```
 
-   Check: `curl http://localhost:8080/health` returns `200`.
+   Check: `curl http://localhost:8080/health` returns `200`. Then open http://localhost:3000: the `POST /events` requests in DevTools get `202`. While `tracker-api` is not running, nginx answers `502` and the tracker keeps the events and retries.
 
 Tests:
 
@@ -116,9 +119,9 @@ go test ./...
 Work in progress.
 
 - [x] Infrastructure in Docker Compose: Kafka, kafka-ui, PostgreSQL, topic, migrations
-- [x] Demo page and event tracker
+- [x] Demo page and event tracker, served by nginx with `/events` proxied to `tracker-api`
 - [x] `tracker-api` skeleton: configuration, health check, graceful shutdown
-- [ ] Receiving events with `POST /events` and serving the page
+- [ ] Receiving events with `POST /events`
 - [ ] Publishing to Kafka
 - [ ] `analytics-processor`: reading from Kafka, window aggregation, writing to PostgreSQL
 - [ ] Docker images for the services

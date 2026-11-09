@@ -10,7 +10,8 @@
 //   - events left unsent by a closed or reloaded page are sent by the next page load.
 // A retry after a lost response produces a duplicate with the same event_id.
 //
-// The endpoint is relative by default (frontend is served by tracker-api).
+// The endpoint is relative by default: nginx serves the page and proxies /events
+// to tracker-api, so the page and the API share one origin.
 // To send events to another origin, set the full URL on the script tag:
 //   <script src="tracker.js" data-endpoint="http://localhost:8080/events"></script>
 // The server then has to allow CORS for this page.

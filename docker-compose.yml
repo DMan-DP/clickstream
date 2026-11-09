@@ -102,6 +102,23 @@ services:
       - ./migrations:/migrations:ro
     restart: "no"
 
+  # Demo page and reverse proxy: /events goes to tracker-api, so the page
+  # and the API share one origin. Page: http://localhost:3000
+  frontend:
+    image: nginx:1.28.0-alpine
+    container_name: clickstream-frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    environment:
+      # tracker-api started on the host with go run; in compose: http://tracker-api:8080
+      TRACKER_API_URL: ${TRACKER_API_URL:-http://host.docker.internal:8080}
+    extra_hosts:
+      # Docker Desktop resolves host.docker.internal itself, Linux needs this line
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+
 volumes:
   kafka-data:
   postgres-data:

@@ -33,7 +33,8 @@ internal/
   analytics/              код analytics-processor: domain, service, repository, consumer
 migrations/               схема PostgreSQL
 frontend/                 демо-страница и трекер
-docker-compose.yml        Kafka, kafka-ui, PostgreSQL, создание топика и миграции
+nginx/                    конфиг nginx: раздает frontend/, проксирует /events в tracker-api
+docker-compose.yml        Kafka, kafka-ui, PostgreSQL, создание топика, миграции, nginx
 ```
 
 ## Формат событий
@@ -89,6 +90,8 @@ At-least-once на всем пути: событие не теряется, но
 
    Compose создаст топик `user-events` с 3 партициями и применит миграции. Интерфейс Kafka откроется на http://localhost:8090, PostgreSQL слушает порт 5432.
 
+   Демо-страница откроется на http://localhost:3000. Ее раздает nginx, он же проксирует `POST /events` в `tracker-api` на хосте (`TRACKER_API_URL` в `.env`), поэтому у страницы и API один origin и CORS не нужен. Правки в `frontend/` видны после перезагрузки страницы, перезапуск не нужен.
+
 3. Запустить `tracker-api` на хосте. Переменные окружения описаны в `.env.example`.
 
    Bash:
@@ -103,7 +106,7 @@ At-least-once на всем пути: событие не теряется, но
    $env:KAFKA_BROKERS="localhost:9092"; $env:KAFKA_TOPIC="user-events"; go run ./cmd/tracker-api
    ```
 
-   Проверка: `curl http://localhost:8080/health` возвращает `200`.
+   Проверка: `curl http://localhost:8080/health` возвращает `200`. Затем открыть http://localhost:3000: запросы `POST /events` в DevTools получают `202`. Пока `tracker-api` не запущен, nginx отвечает `502`, а трекер хранит события и повторяет отправку.
 
 Тесты:
 
@@ -116,9 +119,9 @@ go test ./...
 Проект в разработке.
 
 - [x] Инфраструктура в Docker Compose: Kafka, kafka-ui, PostgreSQL, топик, миграции
-- [x] Демо-страница и трекер событий
+- [x] Демо-страница и трекер событий, раздает nginx с проксированием `/events` в `tracker-api`
 - [x] Каркас `tracker-api`: конфигурация, health check, корректная остановка
-- [ ] Прием событий `POST /events` и раздача страницы
+- [ ] Прием событий `POST /events`
 - [ ] Публикация в Kafka
 - [ ] `analytics-processor`: чтение из Kafka, агрегация по окнам, запись в PostgreSQL
 - [ ] Docker-образы сервисов
