@@ -10,7 +10,6 @@ type Config struct {
 	HTTPAddr     string
 	KafkaBrokers []string
 	KafkaTopic   string
-	StaticDir    string
 }
 
 func getEnvOrDefault(key string, defaultValue string) string {
@@ -70,12 +69,9 @@ func GetConfig() (*Config, error) {
 		return nil, err
 	}
 
-	staticDir := getEnvOrDefault("STATIC_DIR", "frontend")
-
 	return &Config{
 		HTTPAddr:     httpAddr,
 		KafkaBrokers: kafkaBrokers,
 		KafkaTopic:   kafkaTopic,
-		StaticDir:    staticDir,
 	}, nil
 }
