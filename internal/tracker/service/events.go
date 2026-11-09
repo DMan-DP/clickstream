@@ -19,6 +19,7 @@ var (
 	errInvalidEventID = errors.New("event_id is not a valid UUID")
 	errUnknownType    = errors.New("unknown event type")
 	errEmptyElementID = errors.New("element_id is missing")
+	errEmptyClientTS  = errors.New("client_ts is missing")
 )
 
 // allowedTypes is the whitelist of event types. Matching is case sensitive.
@@ -130,6 +131,10 @@ func validateEvent(e Event) error {
 
 	if strings.TrimSpace(e.ElementID) == "" {
 		return fmt.Errorf("validate event: %w: %q", errEmptyElementID, e.ElementID)
+	}
+
+	if e.ClientTS.IsZero() {
+		return fmt.Errorf("validate event: %w", errEmptyClientTS)
 	}
 
 	return nil

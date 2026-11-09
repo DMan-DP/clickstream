@@ -159,7 +159,27 @@ func TestValidateEvent(t *testing.T) {
 			wantErr: errEmptyElementID,
 		},
 
-		// Check order: event_id, then type, then element_id.
+		// client_ts: required; absent and null decode to the zero time.
+		// The range is not checked, any non-zero time in any zone is valid.
+		{
+			name:    "client_ts zero",
+			mutate:  func(e *Event) { e.ClientTS = time.Time{} },
+			wantErr: errEmptyClientTS,
+		},
+		{
+			name:    "client_ts explicit zero UTC",
+			mutate:  func(e *Event) { e.ClientTS = time.Time{}.UTC() },
+			wantErr: errEmptyClientTS,
+		},
+		{
+			name: "client_ts non-UTC zone",
+			mutate: func(e *Event) {
+				e.ClientTS = time.Date(2026, 11, 6, 13, 15, 0, 0, time.FixedZone("UTC+3", 3*60*60))
+			},
+			wantErr: nil,
+		},
+
+		// Check order: event_id, then type, then element_id, then client_ts.
 		{
 			name: "invalid event_id and unknown type",
 			mutate: func(e *Event) {
@@ -175,6 +195,14 @@ func TestValidateEvent(t *testing.T) {
 				e.ElementID = ""
 			},
 			wantErr: errUnknownType,
+		},
+		{
+			name: "empty element_id and zero client_ts",
+			mutate: func(e *Event) {
+				e.ElementID = ""
+				e.ClientTS = time.Time{}
+			},
+			wantErr: errEmptyElementID,
 		},
 	}
 
