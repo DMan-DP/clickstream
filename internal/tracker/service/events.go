@@ -66,15 +66,27 @@ type IngestResult struct {
 	Skipped  int
 }
 
+// publisher sends accepted events to the message broker.
+type publisher interface {
+	// Publish sends all messages as one batch. A nil error means every
+	// message was confirmed by the broker. A non-nil error means the batch
+	// is treated as not published, even if some messages were written:
+	// the caller retries the whole batch, so duplicates are possible.
+	// Implementations may not be able to abort a send already in progress
+	// when ctx is done.
+	Publish(ctx context.Context, messages []message.Event) error
+}
+
 // Events accepts event batches from the tracker.
 type Events struct {
 	logger *slog.Logger
+	pub    publisher
 	now    func() time.Time
 }
 
 // NewEvents creates an events service.
-func NewEvents(logger *slog.Logger) *Events {
-	return &Events{logger: logger, now: time.Now}
+func NewEvents(logger *slog.Logger, pub publisher) *Events {
+	return &Events{logger: logger, pub: pub, now: time.Now}
 }
 
 // Ingest validates each event of the batch, skips invalid ones and
@@ -117,6 +129,13 @@ func (s *Events) Ingest(ctx context.Context, batch Batch) (IngestResult, error) 
 		)
 		msgs = append(msgs, msg)
 		res.Accepted++
+	}
+
+	if len(msgs) > 0 {
+		err := s.pub.Publish(ctx, msgs)
+		if err != nil {
+			return IngestResult{}, err
+		}
 	}
 
 	return res, nil

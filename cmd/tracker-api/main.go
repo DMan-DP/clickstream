@@ -13,12 +13,23 @@ import (
 
 	"github.com/DMan-DP/clickstream/internal/tracker/config"
 	"github.com/DMan-DP/clickstream/internal/tracker/handler"
+	"github.com/DMan-DP/clickstream/internal/tracker/publisher"
 	"github.com/DMan-DP/clickstream/internal/tracker/service"
 	"golang.org/x/sync/errgroup"
 )
 
 func run(logger *slog.Logger, cfg *config.Config) error {
-	eventsService := service.NewEvents(logger.With("component", "event-service"))
+	kafka, err := publisher.NewKafka(cfg.KafkaBrokers, cfg.KafkaTopic)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := kafka.Close(); err != nil {
+			logger.Error("close kafka", "err", err)
+		}
+	}()
+
+	eventsService := service.NewEvents(logger.With("component", "event-service"), kafka)
 	eventsHandler := handler.NewEvents(logger.With("component", "event-handler"), eventsService)
 
 	routes := handler.Routes{

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -316,7 +317,7 @@ func TestEventToMessage(t *testing.T) {
 			}
 
 			if diff := cmp.Diff(want, msg); diff != "" {
-				t.Errorf("eventToMessage() (-want +got): %+v", diff)
+				t.Errorf("eventToMessage() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -406,6 +407,20 @@ func eventWith(mutate func(e *Event)) Event {
 	return e
 }
 
+// stubPublisher returns a preset error and remembers the messages it got
+// and how many times Publish was called.
+type stubPublisher struct {
+	err   error
+	calls int
+	got   []message.Event
+}
+
+func (p *stubPublisher) Publish(ctx context.Context, messages []message.Event) error {
+	p.calls++
+	p.got = slices.Clone(messages)
+	return p.err
+}
+
 func TestIngest(t *testing.T) {
 	sessionID := uuid.MustParse("7c9e6679-7425-40de-944b-e07fc1f90ae7")
 	fixedNow := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
@@ -414,21 +429,28 @@ func TestIngest(t *testing.T) {
 	unknownType := eventWith(func(e *Event) { e.Type = "scroll" })
 	emptyElement := eventWith(func(e *Event) { e.ElementID = "" })
 
+	errPublish := errors.New("broker unavailable")
+
 	tests := []struct {
-		name   string
-		events []Event
-		want   IngestResult
+		name       string
+		events     []Event
+		publishErr error // returned by stubPublisher
+		want       IngestResult
+		wantCalls  int   // how many times Publish was called
+		wantErr    error // nil when Ingest must succeed
 	}{
 		{
 			// The handler rejects empty batches, the service must not fail on them.
-			name:   "empty batch",
-			events: nil,
-			want:   IngestResult{Accepted: 0, Skipped: 0},
+			name:      "empty batch",
+			events:    nil,
+			want:      IngestResult{Accepted: 0, Skipped: 0},
+			wantCalls: 0,
 		},
 		{
-			name:   "single valid",
-			events: []Event{validEvent()},
-			want:   IngestResult{Accepted: 1, Skipped: 0},
+			name:      "single valid",
+			events:    []Event{validEvent()},
+			want:      IngestResult{Accepted: 1, Skipped: 0},
+			wantCalls: 1,
 		},
 		{
 			name: "all valid",
@@ -441,24 +463,29 @@ func TestIngest(t *testing.T) {
 					e.ElementID = "page"
 				}),
 			},
-			want: IngestResult{Accepted: 3, Skipped: 0},
+			want:      IngestResult{Accepted: 3, Skipped: 0},
+			wantCalls: 1,
 		},
 		{
-			name:   "all invalid",
-			events: []Event{invalidID, unknownType, emptyElement},
-			want:   IngestResult{Accepted: 0, Skipped: 3},
+			// Nothing to publish: the publisher is not called.
+			name:      "all invalid",
+			events:    []Event{invalidID, unknownType, emptyElement},
+			want:      IngestResult{Accepted: 0, Skipped: 3},
+			wantCalls: 0,
 		},
 		{
 			name: "nil event_id skipped",
 			events: []Event{
 				eventWith(func(e *Event) { e.ID = "00000000-0000-0000-0000-000000000000" }),
 			},
-			want: IngestResult{Accepted: 0, Skipped: 1},
+			want:      IngestResult{Accepted: 0, Skipped: 1},
+			wantCalls: 0,
 		},
 		{
-			name:   "mixed",
-			events: []Event{validEvent(), invalidID, validEvent(), unknownType},
-			want:   IngestResult{Accepted: 2, Skipped: 2},
+			name:      "mixed",
+			events:    []Event{validEvent(), invalidID, validEvent(), unknownType},
+			want:      IngestResult{Accepted: 2, Skipped: 2},
+			wantCalls: 1,
 		},
 		{
 			// A long value is cleared, the event itself is accepted.
@@ -466,7 +493,8 @@ func TestIngest(t *testing.T) {
 			events: []Event{
 				eventWith(func(e *Event) { e.Value = new(strings.Repeat("я", 65)) }),
 			},
-			want: IngestResult{Accepted: 1, Skipped: 0},
+			want:      IngestResult{Accepted: 1, Skipped: 0},
+			wantCalls: 1,
 		},
 		{
 			// element_id is trimmed before validation: whitespace only is empty.
@@ -475,14 +503,16 @@ func TestIngest(t *testing.T) {
 				eventWith(func(e *Event) { e.ElementID = "   " }),
 				eventWith(func(e *Event) { e.ElementID = "\t\n" }),
 			},
-			want: IngestResult{Accepted: 0, Skipped: 2},
+			want:      IngestResult{Accepted: 0, Skipped: 2},
+			wantCalls: 0,
 		},
 		{
 			name: "element_id with surrounding spaces accepted",
 			events: []Event{
 				eventWith(func(e *Event) { e.ElementID = "  order-button  " }),
 			},
-			want: IngestResult{Accepted: 1, Skipped: 0},
+			want:      IngestResult{Accepted: 1, Skipped: 0},
+			wantCalls: 1,
 		},
 		{
 			// 64 runes after trimming: the limit applies to the trimmed value.
@@ -490,37 +520,69 @@ func TestIngest(t *testing.T) {
 			events: []Event{
 				eventWith(func(e *Event) { e.ElementID = " " + strings.Repeat("a", 64) + " " }),
 			},
-			want: IngestResult{Accepted: 1, Skipped: 0},
+			want:      IngestResult{Accepted: 1, Skipped: 0},
+			wantCalls: 1,
 		},
 		{
 			name: "element_id too long skipped",
 			events: []Event{
 				eventWith(func(e *Event) { e.ElementID = strings.Repeat("a", 65) }),
 			},
-			want: IngestResult{Accepted: 0, Skipped: 1},
+			want:      IngestResult{Accepted: 0, Skipped: 1},
+			wantCalls: 0,
 		},
 		{
 			// Deduplication is deferred, duplicates within a batch are accepted.
-			name:   "duplicate event_id accepted",
-			events: []Event{validEvent(), validEvent()},
-			want:   IngestResult{Accepted: 2, Skipped: 0},
+			name:      "duplicate event_id accepted",
+			events:    []Event{validEvent(), validEvent()},
+			want:      IngestResult{Accepted: 2, Skipped: 0},
+			wantCalls: 1,
+		},
+		{
+			// The batch is not accepted as a whole: no counters, the error
+			// goes up so the handler answers 5xx and the client retries.
+			name:       "publish error",
+			events:     []Event{validEvent(), invalidID},
+			publishErr: errPublish,
+			want:       IngestResult{},
+			wantCalls:  1,
+			wantErr:    errPublish,
+		},
+		{
+			// All events are skipped, so the failing publisher is never
+			// reached and the batch is accepted.
+			name:       "publish error not reached when all skipped",
+			events:     []Event{invalidID},
+			publishErr: errPublish,
+			want:       IngestResult{Accepted: 0, Skipped: 1},
+			wantCalls:  0,
+			wantErr:    nil,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := NewEvents(slog.New(slog.DiscardHandler))
+			p := &stubPublisher{err: tc.publishErr}
+			s := NewEvents(slog.New(slog.DiscardHandler), p)
 			s.now = func() time.Time { return fixedNow }
 
 			batch := Batch{SessionID: sessionID, Events: tc.events}
 
 			got, err := s.Ingest(context.Background(), batch)
-			if err != nil {
-				t.Fatalf("Ingest() error = %v, want nil", err)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Ingest() error = %v, want %v", err, tc.wantErr)
+			}
+
+			if p.calls != tc.wantCalls {
+				t.Errorf("Publish() calls = %d, want %d", p.calls, tc.wantCalls)
 			}
 
 			if got != tc.want {
 				t.Errorf("Ingest() = %+v, want %+v", got, tc.want)
+			}
+
+			if err != nil {
+				return
 			}
 
 			if sum := got.Accepted + got.Skipped; sum != len(tc.events) {
