@@ -70,10 +70,9 @@ const (
 // worst case above, so this is also how many sends Close may wait for.
 const maxInFlight = 150
 
-// NewKafka creates a publisher for the given brokers and topic. Every
-// message must be acknowledged by all in-sync replicas. It returns an error
-// if the brokers cannot be reached.
-func NewKafka(brokers []string, topic string) (*Kafka, error) {
+// producerConfig returns the sarama config for NewProducer. The timeouts
+// are tied to sendBudget, see TestKafkaTimeouts.
+func producerConfig() *sarama.Config {
 	config := sarama.NewConfig()
 	config.Version = sarama.V4_1_0_0
 	config.Producer.RequiredAcks = sarama.WaitForAll
@@ -96,17 +95,30 @@ func NewKafka(brokers []string, topic string) (*Kafka, error) {
 	config.Metadata.Timeout = metadataTimeout
 	config.Metadata.Retry.Max = metadataRetryMax
 	config.Metadata.Retry.Backoff = metadataRetryBackoff
+	return config
+}
 
-	producer, err := sarama.NewSyncProducer(brokers, config)
+// NewProducer creates a synchronous Kafka producer configured for Kafka:
+// all in-sync replicas must acknowledge each message, and retries and
+// network timeouts keep one send within sendBudget. Pass the producer to
+// NewKafka, which takes ownership of it.
+func NewProducer(brokers []string) (sarama.SyncProducer, error) {
+	producer, err := sarama.NewSyncProducer(brokers, producerConfig())
 	if err != nil {
 		return nil, fmt.Errorf("create kafka producer: %w", err)
 	}
+	return producer, nil
+}
 
+// NewKafka creates a publisher that sends events to topic through producer.
+// NewKafka takes ownership of producer: Close waits for background sends
+// and then closes it, so the caller must not close producer itself.
+func NewKafka(producer sarama.SyncProducer, topic string) *Kafka {
 	return &Kafka{
 		producer: producer,
 		topic:    topic,
 		slots:    make(chan struct{}, maxInFlight),
-	}, nil
+	}
 }
 
 // Publish sends all messages as one batch and waits for the result or for

@@ -19,10 +19,12 @@ import (
 )
 
 func run(logger *slog.Logger, cfg *config.Config) error {
-	kafka, err := publisher.NewKafka(cfg.KafkaBrokers, cfg.KafkaTopic)
+	producer, err := publisher.NewProducer(cfg.KafkaBrokers)
 	if err != nil {
 		return err
 	}
+
+	kafka := publisher.NewKafka(producer, cfg.KafkaTopic)
 	defer func() {
 		if err := kafka.Close(); err != nil {
 			logger.Error("close kafka", "err", err)
