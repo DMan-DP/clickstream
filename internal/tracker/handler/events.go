@@ -19,6 +19,11 @@ const (
 	maxBatchSize = 100
 )
 
+// statusClientClosedRequest is the nginx status for a request whose client
+// closed the connection before the response was written. net/http has no
+// constant for it.
+const statusClientClosedRequest = 499
+
 var (
 	errNoEvents      = errors.New("no events")
 	errTooManyEvents = errors.New("too many events")
@@ -48,8 +53,8 @@ func (h *Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeBatch(r.Body)
 	if err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			writeError(w, http.StatusRequestEntityTooLarge, "Request entity too large")
 			h.logger.WarnContext(ctx, "bad request", "err", err)
+			writeError(w, http.StatusRequestEntityTooLarge, "Request entity too large")
 			return
 		}
 
@@ -69,13 +74,23 @@ func (h *Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, context.Canceled):
-			h.logger.InfoContext(ctx, "client gone",
+			h.logger.InfoContext(ctx, "ingest canceled",
+				"events_count", len(req.Events),
 				"session_id", req.SessionID,
 				"err", err,
 			)
+			w.WriteHeader(statusClientClosedRequest)
 			return
 		case errors.Is(err, context.DeadlineExceeded):
 			h.logger.ErrorContext(ctx, "ingest timeout",
+				"events_count", len(req.Events),
+				"session_id", req.SessionID,
+				"err", err,
+			)
+			writeError(w, http.StatusServiceUnavailable, "Service unavailable")
+			return
+		case errors.Is(err, service.ErrUnavailable):
+			h.logger.ErrorContext(ctx, "ingest unavailable",
 				"events_count", len(req.Events),
 				"session_id", req.SessionID,
 				"err", err,

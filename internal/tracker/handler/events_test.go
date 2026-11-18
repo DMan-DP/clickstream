@@ -523,14 +523,22 @@ func TestEventsServeHTTP(t *testing.T) {
 			wantError:  "Internal server error",
 		},
 		{
-			// Nothing is written when the client is gone, so the recorder
-			// keeps its default 200.
+			// The client is gone: only the status is written, without a body,
+			// so access logs see 499 instead of an implicit 200.
 			name:          "ingest client gone",
 			body:          validBody,
 			ingestErr:     fmt.Errorf("publish batch: %w", context.Canceled),
-			wantStatus:    http.StatusOK,
+			wantStatus:    statusClientClosedRequest,
 			wantCalled:    true,
 			wantEmptyBody: true,
+		},
+		{
+			name:       "ingest unavailable",
+			body:       validBody,
+			ingestErr:  fmt.Errorf("publish batch: %w", service.ErrUnavailable),
+			wantStatus: http.StatusServiceUnavailable,
+			wantCalled: true,
+			wantError:  "Service unavailable",
 		},
 	}
 

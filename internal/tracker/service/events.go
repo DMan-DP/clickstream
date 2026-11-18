@@ -26,6 +26,13 @@ var (
 	errEmptyClientTS    = errors.New("client_ts is missing")
 )
 
+// ErrUnavailable means the publisher cannot take a batch right now: the
+// broker does not accept messages or the publisher is closed. The batch is
+// not published, though some messages may already be written, and the
+// caller may retry it later. Publisher implementations wrap this error;
+// check it with errors.Is.
+var ErrUnavailable = errors.New("publisher is unavailable")
+
 // allowedTypes is the whitelist of event types. Matching is case sensitive.
 var allowedTypes = map[string]struct{}{
 	"click":     {},
@@ -70,10 +77,14 @@ type IngestResult struct {
 type publisher interface {
 	// Publish sends all messages as one batch. A nil error means every
 	// message was confirmed by the broker. A non-nil error means the batch
-	// is treated as not published, even if some messages were written:
-	// the caller retries the whole batch, so duplicates are possible.
+	// is treated as not published, even if some messages were written.
 	// Implementations may not be able to abort a send already in progress
 	// when ctx is done.
+	//
+	// An error wrapping ErrUnavailable means the broker cannot take the batch
+	// right now; a context error means ctx ended before the result was known.
+	// In both cases a retry may succeed, so duplicates are possible; any other
+	// error is internal and a retry will not help.
 	Publish(ctx context.Context, messages []message.Event) error
 }
 
@@ -90,8 +101,10 @@ func NewEvents(logger *slog.Logger, pub publisher) *Events {
 }
 
 // Ingest validates each event of the batch, skips invalid ones and
-// accepts the rest. A non-nil error means the batch was not accepted
-// as a whole and the client should retry it.
+// publishes the rest as one batch. A nil error means all accepted events
+// are published. An error wrapping ErrUnavailable or a context error means
+// the batch was not accepted as a whole and the client may retry it; any
+// other error is internal and a retry will not help.
 func (s *Events) Ingest(ctx context.Context, batch Batch) (IngestResult, error) {
 	serverTS := s.now().UTC()
 	var res IngestResult
@@ -134,7 +147,7 @@ func (s *Events) Ingest(ctx context.Context, batch Batch) (IngestResult, error) 
 	if len(msgs) > 0 {
 		err := s.pub.Publish(ctx, msgs)
 		if err != nil {
-			return IngestResult{}, err
+			return IngestResult{}, fmt.Errorf("ingest: %w", err)
 		}
 	}
 
