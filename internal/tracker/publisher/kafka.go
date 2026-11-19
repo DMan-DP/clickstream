@@ -66,8 +66,13 @@ const (
 // maxInFlight limits concurrent sends, including those still running in the
 // background after Publish returned. By Little's law, sends in flight =
 // batches per second * send time: 1000/s * 150ms (p95 under load, not the
-// mean) = 150. While Kafka is down every send holds a slot for up to the
-// worst case above, so this is also how many sends Close may wait for.
+// mean) = 150. While Kafka is down every send holds a slot for about the
+// worst case above, and under load longer: sarama queues retries per
+// partition, so a new send may wait behind earlier ones. A request is still
+// answered within its deadline, because Publish stops waiting when ctx is
+// done. When all slots are busy, new batches wait for a free slot until ctx
+// is done and are not sent at all. maxInFlight is also how many sends Close
+// may wait for.
 const maxInFlight = 150
 
 // producerConfig returns the sarama config for NewProducer. The timeouts
@@ -206,7 +211,9 @@ func (k *Kafka) Publish(ctx context.Context, messages []message.Event) error {
 }
 
 // Close stops accepting new batches, waits for the sends still running in
-// the background and shuts down the producer. Publish calls made after
+// the background and shuts down the producer. Close has no timeout of its
+// own: while Kafka is down it may take as long as the slowest pending send,
+// see maxInFlight. Publish calls made after
 // Close return an error wrapping service.ErrUnavailable. Repeated calls do
 // nothing and return nil. A call made while another Close is still waiting
 // also returns nil at once, before the producer is closed: main calls Close
