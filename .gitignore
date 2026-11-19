@@ -1,2 +1,7 @@
 # Local secrets, see .env.example
 .env
+
+# Binaries: go build output, delve debug builds, test binaries
+*.exe
+__debug_bin*
+*.test
