@@ -1,4 +1,4 @@
-package config
+package envconfig
 
 import (
 	"log/slog"
@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestBroker(t *testing.T) {
+func TestList(t *testing.T) {
 	configs := []struct {
 		name    string
 		in      string
@@ -59,11 +59,11 @@ func TestBroker(t *testing.T) {
 
 	for _, config := range configs {
 		t.Run(config.name, func(t *testing.T) {
-			t.Setenv("KAFKA_BROKERS", config.in)
-			addrs, err := getKafkaBrokers()
+			t.Setenv("TEST_LIST", config.in)
+			addrs, err := List("TEST_LIST")
 
 			if (err != nil) != config.wantErr {
-				t.Errorf("getKafkaBrokers(%q) err = %v, wantErr %v", config.in, err, config.wantErr)
+				t.Errorf("List(%q) err = %v, wantErr %v", config.in, err, config.wantErr)
 			}
 
 			if err != nil {
@@ -71,7 +71,7 @@ func TestBroker(t *testing.T) {
 			}
 
 			if !slices.Equal(addrs, config.want) {
-				t.Errorf("getKafkaBrokers(%q) got = %v, want %v", config.in, addrs, config.want)
+				t.Errorf("List(%q) got = %v, want %v", config.in, addrs, config.want)
 			}
 		})
 	}
@@ -133,11 +133,11 @@ func TestLogLevel(t *testing.T) {
 
 	for _, config := range configs {
 		t.Run(config.name, func(t *testing.T) {
-			t.Setenv("LOG_LEVEL", config.in)
-			lvl, err := getLogLevel()
+			t.Setenv("TEST_LOG_LEVEL", config.in)
+			lvl, err := logLevel("TEST_LOG_LEVEL")
 
 			if (err != nil) != config.wantErr {
-				t.Errorf("getLogLevel(%q) err = %v, wantErr %v", config.in, err, config.wantErr)
+				t.Errorf("logLevel(%q) err = %v, wantErr %v", config.in, err, config.wantErr)
 			}
 
 			if err != nil {
@@ -145,7 +145,7 @@ func TestLogLevel(t *testing.T) {
 			}
 
 			if lvl != config.want {
-				t.Errorf("getLogLevel(%q) got = %v, want %v", config.in, lvl, config.want)
+				t.Errorf("logLevel(%q) got = %v, want %v", config.in, lvl, config.want)
 			}
 		})
 	}
