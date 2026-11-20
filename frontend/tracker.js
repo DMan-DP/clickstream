@@ -1,7 +1,9 @@
+// @ts-check
 // Clickstream tracker: collects user actions on the page and sends them to tracker-api.
 //
 // Request body (POST /events):
 //   {"session_id": "<uuid>", "events": [{"event_id", "type", "element_id", "value"?, "client_ts"}]}
+// The types below (EventBatch, TrackedEvent) describe it in detail.
 //
 // Delivery is at-least-once:
 //   - every event gets a UUID event_id here, so the backend can find duplicates;
@@ -17,6 +19,49 @@
 // The server then has to allow CORS for this page.
 (function () {
   'use strict';
+
+  // --- contract with tracker-api ---
+
+  /**
+   * Event types accepted by tracker-api; any other type is dropped there.
+   * @typedef {'page_view' | 'click' | 'input' | 'change' | 'focus' | 'blur' | 'submit'} EventType
+   */
+
+  /**
+   * One user action.
+   * @typedef {Object} TrackedEvent
+   * @property {string} event_id UUID made here; a retried send keeps it, so duplicates can be found
+   * @property {EventType} type
+   * @property {string} element_id id of the element, or 'page' for page_view
+   * @property {string} [value] selected value for select, radio and range, 'true' / 'false'
+   *   for checkbox, input length for text fields; absent for other elements and events
+   * @property {string} client_ts client time, ISO 8601 in UTC; the backend aggregates by its own time
+   */
+
+  /**
+   * Request body of POST /events: events of one session.
+   * @typedef {Object} EventBatch
+   * @property {string} session_id UUID, one per browser tab (sessionStorage)
+   * @property {TrackedEvent[]} events up to MAX_BATCH_SIZE events
+   */
+
+  // --- local storage ---
+
+  /**
+   * An event waiting for confirmation. It keeps its session id: an adopted
+   * outbox of another tab may hold events of an older session.
+   * @typedef {Object} OutboxItem
+   * @property {string} session_id
+   * @property {TrackedEvent} event
+   */
+
+  /**
+   * What one page load keeps under its localStorage key.
+   * @typedef {Object} OutboxRecord
+   * @property {number} updated last save time, ms since epoch
+   * @property {boolean} left the page fired pagehide, its outbox may be adopted right away
+   * @property {OutboxItem[]} items oldest first
+   */
 
   const DEFAULT_ENDPOINT = '/events';
   const FLUSH_INTERVAL_MS = 5000;
@@ -37,13 +82,15 @@
   const endpoint = (script && script.dataset.endpoint) || DEFAULT_ENDPOINT;
 
   const sessionId = getSessionId();
-  const pendingInputs = new Map(); // element -> debounce timer id
+  /** @type {Map<Element, number>} element -> debounce timer id */
+  const pendingInputs = new Map();
 
   // Outbox: events not confirmed by the server yet, oldest first, as {session_id, event}.
   // Each page load owns its own localStorage key, so tabs never overwrite each other
   // (a duplicated tab shares sessionStorage and therefore the session id).
   const store = getLocalStorage();
   const outboxKey = OUTBOX_PREFIX + newUUID();
+  /** @type {OutboxItem[]} */
   let outbox = [];
   let left = false;   // pagehide fired: the next page load may take this outbox over
   let sending = false; // one request at a time keeps the keepalive body quota (64 KB) safe
@@ -52,6 +99,11 @@
 
   // --- ids ---
 
+  /**
+   * Session id of this tab: kept in sessionStorage, so reloads keep it
+   * and a new tab gets a new one.
+   * @returns {string}
+   */
   function getSessionId() {
     try {
       let id = sessionStorage.getItem(SESSION_KEY);
@@ -66,6 +118,10 @@
     }
   }
 
+  /**
+   * Random UUID v4 in canonical lower case form.
+   * @returns {string}
+   */
   function newUUID() {
     if (crypto.randomUUID) {
       return crypto.randomUUID();
@@ -81,6 +137,7 @@
 
   // --- outbox storage ---
 
+  /** @returns {Storage | null} */
   function getLocalStorage() {
     try {
       return window.localStorage;
@@ -89,6 +146,7 @@
     }
   }
 
+  // Writes the outbox to localStorage as an OutboxRecord, or removes the key when it is empty.
   function saveOutbox() {
     if (!store) {
       return;
@@ -97,7 +155,9 @@
       if (outbox.length === 0) {
         store.removeItem(outboxKey);
       } else {
-        store.setItem(outboxKey, JSON.stringify({ updated: Date.now(), left: left, items: outbox }));
+        /** @type {OutboxRecord} */
+        const record = { updated: Date.now(), left: left, items: outbox };
+        store.setItem(outboxKey, JSON.stringify(record));
       }
     } catch (e) {
       // quota exceeded: the events are still in memory and will be sent from there
@@ -121,9 +181,10 @@
       }
       const now = Date.now();
       for (const key of keys) {
+        /** @type {OutboxRecord | null} */
         let record = null;
         try {
-          record = JSON.parse(store.getItem(key));
+          record = JSON.parse(store.getItem(key) || 'null');
         } catch (e) {
           // broken record: removed below
         }
@@ -142,6 +203,7 @@
     saveOutbox();
   }
 
+  // Keeps at most MAX_STORED_EVENTS, dropping the oldest.
   function trimOutbox() {
     const extra = outbox.length - MAX_STORED_EVENTS;
     if (extra > 0) {
@@ -152,20 +214,37 @@
 
   // --- elements ---
 
+  /**
+   * The tracked element the event happened in: the target itself or its
+   * closest tracked ancestor (a click on a label text inside a button).
+   * @param {EventTarget | null} target
+   * @returns {Element | null}
+   */
   function trackedElement(target) {
     return target instanceof Element ? target.closest(TRACKED_SELECTOR) : null;
   }
 
+  /**
+   * A field with free text, whose value is never sent, only its length.
+   * @param {Element} el
+   * @returns {el is HTMLInputElement | HTMLTextAreaElement}
+   */
   function isTextField(el) {
-    return el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && TEXT_INPUT_TYPES.includes(el.type));
+    return el instanceof HTMLTextAreaElement ||
+      (el instanceof HTMLInputElement && TEXT_INPUT_TYPES.includes(el.type));
   }
 
-  // value for slider, select, checkbox and radio; only the input length for text fields
+  /**
+   * TrackedEvent.value for the element: the value for slider, select and radio,
+   * 'true' / 'false' for checkbox, only the input length for text fields.
+   * @param {Element} el
+   * @returns {string | undefined} undefined for elements without a value (buttons, forms)
+   */
   function valueOf(el) {
     if (isTextField(el)) {
       return String(el.value.length);
     }
-    if (el.tagName === 'INPUT') {
+    if (el instanceof HTMLInputElement) {
       switch (el.type) {
         case 'checkbox':
           return String(el.checked);
@@ -175,7 +254,7 @@
       }
       return undefined;
     }
-    if (el.tagName === 'SELECT') {
+    if (el instanceof HTMLSelectElement) {
       return el.value;
     }
     return undefined;
@@ -183,7 +262,14 @@
 
   // --- tracking ---
 
+  /**
+   * Adds an event to the outbox; it is sent by the next flush.
+   * @param {EventType} type
+   * @param {string} elementId
+   * @param {string} [value]
+   */
   function track(type, elementId, value) {
+    /** @type {TrackedEvent} */
     const event = {
       event_id: newUUID(),
       type: type,
@@ -201,6 +287,10 @@
     }
   }
 
+  /**
+   * Sends a debounced input event right away and cancels its timer.
+   * @param {Element} el
+   */
   function trackInputNow(el) {
     clearTimeout(pendingInputs.get(el));
     pendingInputs.delete(el);
@@ -217,12 +307,14 @@
   // --- sending ---
 
   // Sends the oldest batch: up to MAX_BATCH_SIZE events of one session
-  // (adopted outboxes may hold events of older sessions). force skips the backoff.
+  // (adopted outboxes may hold events of older sessions).
+  /** @param {boolean} force skip the retry backoff (page leave) */
   function flush(force) {
     if (sending || outbox.length === 0 || (!force && Date.now() < retryAt)) {
       return;
     }
     const sid = outbox[0].session_id;
+    /** @type {TrackedEvent[]} */
     const events = [];
     for (const item of outbox) {
       if (item.session_id === sid) {
@@ -237,14 +329,21 @@
 
   // fetch with keepalive instead of sendBeacon: the request survives page unload
   // like a beacon, and when the page lives on, the response tells whether to retry.
+  /**
+   * @param {string} sid
+   * @param {TrackedEvent[]} events
+   */
   function send(sid, events) {
     sending = true;
+    /** @type {EventBatch} */
+    const batch = { session_id: sid, events: events };
+    /** @type {Promise<Response>} */
     let request;
     try {
       request = fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sid, events: events }),
+        body: JSON.stringify(batch),
         keepalive: true,
       });
     } catch (e) {
@@ -271,6 +370,10 @@
     });
   }
 
+  /**
+   * Removes events from the outbox: accepted by the server or rejected for good.
+   * @param {TrackedEvent[]} events
+   */
   function confirm(events) {
     const done = new Set(events.map((e) => e.event_id));
     outbox = outbox.filter((item) => !done.has(item.event.event_id));
@@ -294,7 +397,7 @@
 
   document.addEventListener('input', function (e) {
     const el = trackedElement(e.target);
-    if (!el || !(isTextField(el) || el.type === 'range')) {
+    if (!el || !(isTextField(el) || (el instanceof HTMLInputElement && el.type === 'range'))) {
       return; // select, checkbox and radio are reported by change
     }
     clearTimeout(pendingInputs.get(el));
