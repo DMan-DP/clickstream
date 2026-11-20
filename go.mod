@@ -1,6 +1,6 @@
 module github.com/DMan-DP/clickstream
 
-go 1.27.3
+go 1.27.0
 
 // Planned dependencies (go get when first imported):
 //   github.com/IBM/sarama             Kafka producer and consumer group
