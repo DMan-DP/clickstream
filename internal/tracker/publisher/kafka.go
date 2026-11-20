@@ -78,29 +78,29 @@ const maxInFlight = 150
 // producerConfig returns the sarama config for NewProducer. The timeouts
 // are tied to sendBudget, see TestKafkaTimeouts.
 func producerConfig() *sarama.Config {
-	config := sarama.NewConfig()
-	config.Version = sarama.V4_1_0_0
-	config.Producer.RequiredAcks = sarama.WaitForAll
+	c := sarama.NewConfig()
+	c.Version = sarama.V4_1_0_0
+	c.Producer.RequiredAcks = sarama.WaitForAll
 	// Idempotent producer is off on purpose: sarama requires
 	// Net.MaxOpenRequests = 1 for it, which limits one instance to a single
 	// in-flight request per broker. Duplicates from producer retries are
 	// acceptable (at-least-once) and are removed by deduplication on the
 	// consumer side.
-	config.Producer.Idempotent = false
-	config.Producer.Return.Successes = true
+	c.Producer.Idempotent = false
+	c.Producer.Return.Successes = true
 	// Errors are returned by default; set explicitly because SendMessages
 	// relies on both Successes and Errors to report the result of every message.
-	config.Producer.Return.Errors = true
-	config.Net.DialTimeout = dialTimeout
-	config.Net.WriteTimeout = writeTimeout
-	config.Net.ReadTimeout = readTimeout
-	config.Producer.Retry.Max = maxRetry
-	config.Producer.Retry.Backoff = retryBackoff
-	config.Producer.Timeout = producerTimeout
-	config.Metadata.Timeout = metadataTimeout
-	config.Metadata.Retry.Max = metadataRetryMax
-	config.Metadata.Retry.Backoff = metadataRetryBackoff
-	return config
+	c.Producer.Return.Errors = true
+	c.Net.DialTimeout = dialTimeout
+	c.Net.WriteTimeout = writeTimeout
+	c.Net.ReadTimeout = readTimeout
+	c.Producer.Retry.Max = maxRetry
+	c.Producer.Retry.Backoff = retryBackoff
+	c.Producer.Timeout = producerTimeout
+	c.Metadata.Timeout = metadataTimeout
+	c.Metadata.Retry.Max = metadataRetryMax
+	c.Metadata.Retry.Backoff = metadataRetryBackoff
+	return c
 }
 
 // NewProducer creates a synchronous Kafka producer configured for Kafka:

@@ -20,7 +20,28 @@
       "mode": "auto",
       "program": "${workspaceFolder}/cmd/analytics-processor",
       "cwd": "${workspaceFolder}",
-      "envFile": "${workspaceFolder}/.env"
+      "envFile": "${workspaceFolder}/.env",
+      "output": "${workspaceFolder}/__debug_bin_analytics-processor-1.exe"
+    },
+    {
+      // Second member of the same consumer group, to see the partitions
+      // split between instances and the rebalance when one of them stops.
+      // A separate output is required: on Windows a running binary is
+      // locked and cannot be rebuilt by the second launch.
+      "name": "analytics-processor #2",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/analytics-processor",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "output": "${workspaceFolder}/__debug_bin_analytics-processor-2.exe"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "analytics-processor x2",
+      "configurations": ["analytics-processor", "analytics-processor #2"]
     }
   ]
 }
