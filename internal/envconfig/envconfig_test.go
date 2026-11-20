@@ -7,7 +7,7 @@ import (
 )
 
 func TestList(t *testing.T) {
-	configs := []struct {
+	tests := []struct {
 		name    string
 		in      string
 		want    []string
@@ -57,28 +57,28 @@ func TestList(t *testing.T) {
 		},
 	}
 
-	for _, config := range configs {
-		t.Run(config.name, func(t *testing.T) {
-			t.Setenv("TEST_LIST", config.in)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TEST_LIST", tc.in)
 			addrs, err := List("TEST_LIST")
 
-			if (err != nil) != config.wantErr {
-				t.Errorf("List(%q) err = %v, wantErr %v", config.in, err, config.wantErr)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("List(%q) err = %v, wantErr %v", tc.in, err, tc.wantErr)
 			}
 
 			if err != nil {
 				return
 			}
 
-			if !slices.Equal(addrs, config.want) {
-				t.Errorf("List(%q) got = %v, want %v", config.in, addrs, config.want)
+			if !slices.Equal(addrs, tc.want) {
+				t.Errorf("List(%q) got = %v, want %v", tc.in, addrs, tc.want)
 			}
 		})
 	}
 }
 
 func TestLogLevel(t *testing.T) {
-	configs := []struct {
+	tests := []struct {
 		name    string
 		in      string
 		want    slog.Level
@@ -131,21 +131,21 @@ func TestLogLevel(t *testing.T) {
 		},
 	}
 
-	for _, config := range configs {
-		t.Run(config.name, func(t *testing.T) {
-			t.Setenv("TEST_LOG_LEVEL", config.in)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TEST_LOG_LEVEL", tc.in)
 			lvl, err := logLevel("TEST_LOG_LEVEL")
 
-			if (err != nil) != config.wantErr {
-				t.Errorf("logLevel(%q) err = %v, wantErr %v", config.in, err, config.wantErr)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("logLevel(%q) err = %v, wantErr %v", tc.in, err, tc.wantErr)
 			}
 
 			if err != nil {
 				return
 			}
 
-			if lvl != config.want {
-				t.Errorf("logLevel(%q) got = %v, want %v", config.in, lvl, config.want)
+			if lvl != tc.want {
+				t.Errorf("logLevel(%q) got = %v, want %v", tc.in, lvl, tc.want)
 			}
 		})
 	}
