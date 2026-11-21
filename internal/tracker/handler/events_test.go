@@ -22,6 +22,14 @@ import (
 
 var fixtureSessionID = uuid.MustParse("3ed98b41-6ae1-430e-8a3d-9945cbbe1c29")
 
+// Limits of the request contract: up to 100 events and a body up to
+// 64 KiB. Tests use these and not maxBatchSize / maxBodyBytes, so a wrong
+// constant in the handler fails the tests.
+const (
+	contractMaxBatch = 100
+	contractMaxBody  = 64 << 10
+)
+
 func TestDecodeBatch(t *testing.T) {
 	fixtureEventsCount := 25
 
@@ -265,7 +273,7 @@ func TestBatchRequestValidate(t *testing.T) {
 		{
 			name:      "max events",
 			sessionID: fixtureSessionID,
-			events:    slices.Repeat(event, maxBatchSize),
+			events:    slices.Repeat(event, contractMaxBatch),
 			wantErr:   nil,
 		},
 		{
@@ -283,7 +291,7 @@ func TestBatchRequestValidate(t *testing.T) {
 		{
 			name:      "too many events",
 			sessionID: fixtureSessionID,
-			events:    slices.Repeat(event, maxBatchSize+1),
+			events:    slices.Repeat(event, contractMaxBatch+1),
 			wantErr:   errTooManyEvents,
 		},
 		{
@@ -363,18 +371,27 @@ func TestValidationMessage(t *testing.T) {
 	}
 }
 
-// stubIngester returns a preset result and remembers the batch it got.
+// stubIngester returns a preset result and remembers the ctx and the batch
+// it got.
 type stubIngester struct {
 	result service.IngestResult
 	err    error
 	called bool
+	ctx    context.Context
 	got    service.Batch
 }
 
-func (s *stubIngester) Ingest(_ context.Context, batch service.Batch) (service.IngestResult, error) {
+func (s *stubIngester) Ingest(ctx context.Context, batch service.Batch) (service.IngestResult, error) {
 	s.called = true
+	s.ctx = ctx
 	s.got = batch
 	return s.result, s.err
+}
+
+// padTo appends spaces to body up to n bytes. JSON allows whitespace
+// after the object, so the body stays valid.
+func padTo(body string, n int) string {
+	return body + strings.Repeat(" ", n-len(body))
 }
 
 // batchJSON returns a request body with n valid events.
@@ -402,8 +419,12 @@ func TestEventsServeHTTP(t *testing.T) {
 		wantStatus int
 		wantCalled bool
 		// Exactly one of the three is checked: a 202 body, an error body
-		// or no body at all.
-		wantResponse  *batchResponse
+		// or no body at all. wantResponse is the whole JSON object as
+		// decoded into a map, so the field names are checked too.
+		wantResponse map[string]any
+		// wantError is the exact error text; empty means any non-empty
+		// text. The texts are fixed only for request-level checks, see
+		// validationMessage.
 		wantError     string
 		wantEmptyBody bool
 	}{
@@ -414,7 +435,7 @@ func TestEventsServeHTTP(t *testing.T) {
 			ingestResult: service.IngestResult{Accepted: 2, Skipped: 1},
 			wantStatus:   http.StatusAccepted,
 			wantCalled:   true,
-			wantResponse: &batchResponse{Accepted: 2, Skipped: 1},
+			wantResponse: map[string]any{"accepted": 2.0, "skipped": 1.0},
 		},
 		{
 			name:         "all events skipped",
@@ -422,15 +443,23 @@ func TestEventsServeHTTP(t *testing.T) {
 			ingestResult: service.IngestResult{Accepted: 0, Skipped: 3},
 			wantStatus:   http.StatusAccepted,
 			wantCalled:   true,
-			wantResponse: &batchResponse{Accepted: 0, Skipped: 3},
+			wantResponse: map[string]any{"accepted": 0.0, "skipped": 3.0},
 		},
 		{
 			name:         "max batch size",
-			body:         batchJSON(fixtureSessionID.String(), maxBatchSize),
-			ingestResult: service.IngestResult{Accepted: maxBatchSize},
+			body:         batchJSON(fixtureSessionID.String(), contractMaxBatch),
+			ingestResult: service.IngestResult{Accepted: contractMaxBatch},
 			wantStatus:   http.StatusAccepted,
 			wantCalled:   true,
-			wantResponse: &batchResponse{Accepted: maxBatchSize},
+			wantResponse: map[string]any{"accepted": float64(contractMaxBatch), "skipped": 0.0},
+		},
+		{
+			name:         "body exactly at limit",
+			body:         padTo(validBody, contractMaxBody),
+			ingestResult: service.IngestResult{Accepted: 3},
+			wantStatus:   http.StatusAccepted,
+			wantCalled:   true,
+			wantResponse: map[string]any{"accepted": 3.0, "skipped": 0.0},
 		},
 
 		// Request level: the service is not called.
@@ -438,32 +467,27 @@ func TestEventsServeHTTP(t *testing.T) {
 			name:       "malformed JSON",
 			body:       `{"session_id":`,
 			wantStatus: http.StatusBadRequest,
-			wantError:  "Bad request",
 		},
 		{
 			name:       "empty body",
 			body:       "",
 			wantStatus: http.StatusBadRequest,
-			wantError:  "Bad request",
 		},
 		{
 			name:       "trailing data after object",
 			body:       validBody + `{}`,
 			wantStatus: http.StatusBadRequest,
-			wantError:  "Bad request",
 		},
 		{
 			// Also checks that decodeBatch keeps *http.MaxBytesError in the chain.
-			name:       "body larger than limit",
-			body:       "{" + strings.Repeat(" ", maxBodyBytes) + "}",
+			name:       "body one byte over limit",
+			body:       padTo(validBody, contractMaxBody+1),
 			wantStatus: http.StatusRequestEntityTooLarge,
-			wantError:  "Request entity too large",
 		},
 		{
 			name:       "session_id malformed",
 			body:       batchJSON("not-a-uuid", 1),
 			wantStatus: http.StatusBadRequest,
-			wantError:  "Bad request",
 		},
 		{
 			name:       "session_id nil",
@@ -491,9 +515,9 @@ func TestEventsServeHTTP(t *testing.T) {
 		},
 		{
 			name:       "too many events",
-			body:       batchJSON(fixtureSessionID.String(), maxBatchSize+1),
+			body:       batchJSON(fixtureSessionID.String(), contractMaxBatch+1),
 			wantStatus: http.StatusBadRequest,
-			wantError:  fmt.Sprintf("Too many events, max %d", maxBatchSize),
+			wantError:  fmt.Sprintf("Too many events, max %d", contractMaxBatch),
 		},
 
 		// Service errors.
@@ -503,7 +527,6 @@ func TestEventsServeHTTP(t *testing.T) {
 			ingestErr:  context.DeadlineExceeded,
 			wantStatus: http.StatusServiceUnavailable,
 			wantCalled: true,
-			wantError:  "Service unavailable",
 		},
 		{
 			// errors.Is must see through wrapping.
@@ -512,7 +535,6 @@ func TestEventsServeHTTP(t *testing.T) {
 			ingestErr:  fmt.Errorf("publish batch: %w", context.DeadlineExceeded),
 			wantStatus: http.StatusServiceUnavailable,
 			wantCalled: true,
-			wantError:  "Service unavailable",
 		},
 		{
 			name:       "ingest unexpected error",
@@ -520,7 +542,6 @@ func TestEventsServeHTTP(t *testing.T) {
 			ingestErr:  errors.New("boom"),
 			wantStatus: http.StatusInternalServerError,
 			wantCalled: true,
-			wantError:  "Internal server error",
 		},
 		{
 			// The client is gone: only the status is written, without a body,
@@ -538,7 +559,6 @@ func TestEventsServeHTTP(t *testing.T) {
 			ingestErr:  fmt.Errorf("publish batch: %w", service.ErrUnavailable),
 			wantStatus: http.StatusServiceUnavailable,
 			wantCalled: true,
-			wantError:  "Service unavailable",
 		},
 	}
 
@@ -574,27 +594,54 @@ func TestEventsServeHTTP(t *testing.T) {
 				t.Errorf("Content-Type = %q, want application/json", ct)
 			}
 
-			dec := json.NewDecoder(res.Body)
+			var got map[string]any
+			if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
 
 			if tc.wantResponse != nil {
-				var got batchResponse
-				if err := dec.Decode(&got); err != nil {
-					t.Fatalf("decode response body: %v", err)
-				}
-				if got != *tc.wantResponse {
-					t.Errorf("body = %+v, want %+v", got, *tc.wantResponse)
+				if diff := cmp.Diff(tc.wantResponse, got); diff != "" {
+					t.Errorf("body mismatch (-want +got):\n%s", diff)
 				}
 				return
 			}
 
-			var got errorResponse
-			if err := dec.Decode(&got); err != nil {
-				t.Fatalf("decode error body: %v", err)
+			// An error body is {"error": msg} and nothing else.
+			msg, ok := got["error"].(string)
+			if !ok || len(got) != 1 {
+				t.Fatalf(`body = %v, want {"error": <text>}`, got)
 			}
-			if got.Error != tc.wantError {
-				t.Errorf("error = %q, want %q", got.Error, tc.wantError)
+			if tc.wantError == "" && msg == "" {
+				t.Errorf("error text is empty")
+			}
+			if tc.wantError != "" && msg != tc.wantError {
+				t.Errorf("error = %q, want %q", msg, tc.wantError)
 			}
 		})
+	}
+}
+
+// TestEventsServeHTTPPassesContext checks that the service gets the request
+// context, so the deadline of WithTimeout reaches the publisher.
+func TestEventsServeHTTPPassesContext(t *testing.T) {
+	type ctxKey struct{}
+
+	stub := &stubIngester{result: service.IngestResult{Accepted: 1}}
+	h := NewEvents(slog.New(slog.DiscardHandler), stub)
+
+	req := httptest.NewRequest(http.MethodPost, "/events", strings.NewReader(batchJSON(fixtureSessionID.String(), 1)))
+	req = req.WithContext(context.WithValue(req.Context(), ctxKey{}, "request"))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
+	}
+	// The service may get the request ctx or a ctx derived from it, so the
+	// test checks that a value of the request ctx reaches Ingest.
+	if stub.ctx == nil || stub.ctx.Value(ctxKey{}) != "request" {
+		t.Errorf("Ingest got a ctx that is not derived from the request ctx")
 	}
 }
 

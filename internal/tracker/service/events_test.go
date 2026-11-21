@@ -12,6 +12,7 @@ import (
 
 	"github.com/DMan-DP/clickstream/internal/message"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 // validEvent returns an event that eventToMessage accepts. Each case
@@ -280,6 +281,15 @@ func TestEventToMessage(t *testing.T) {
 			wantErr: errInvalidEventID,
 		},
 		{
+			// A nil UUID is an invalid event_id, so it is also checked first.
+			name: "nil event_id and unknown type",
+			mutate: func(e *Event) {
+				e.ID = "00000000-0000-0000-0000-000000000000"
+				e.Type = "scroll"
+			},
+			wantErr: errInvalidEventID,
+		},
+		{
 			name: "unknown type and empty element_id",
 			mutate: func(e *Event) {
 				e.Type = "scroll"
@@ -294,6 +304,15 @@ func TestEventToMessage(t *testing.T) {
 				e.ClientTS = time.Time{}
 			},
 			wantErr: errEmptyElementID,
+		},
+		{
+			// The length of element_id is checked before client_ts too.
+			name: "too long element_id and zero client_ts",
+			mutate: func(e *Event) {
+				e.ElementID = strings.Repeat("a", 65)
+				e.ClientTS = time.Time{}
+			},
+			wantErr: errTooLongElementID,
 		},
 	}
 
@@ -407,18 +426,89 @@ func eventWith(mutate func(e *Event)) Event {
 	return e
 }
 
-// stubPublisher returns a preset error and remembers the messages it got
-// and how many times Publish was called.
+// stubPublisher returns a preset error and remembers the ctx and the
+// messages of the last call and how many times Publish was called.
 type stubPublisher struct {
 	err   error
 	calls int
+	ctx   context.Context
 	got   []message.Event
 }
 
 func (p *stubPublisher) Publish(ctx context.Context, messages []message.Event) error {
 	p.calls++
+	p.ctx = ctx
 	p.got = slices.Clone(messages)
 	return p.err
+}
+
+// TestIngestPublishedMessages checks what Ingest passes to the publisher:
+// every accepted event and only them, a long value cleared, ServerTS in
+// UTC, and the ctx of Ingest.
+func TestIngestPublishedMessages(t *testing.T) {
+	type ctxKey struct{}
+
+	sessionID := uuid.MustParse("7c9e6679-7425-40de-944b-e07fc1f90ae7")
+	// Not UTC on purpose: ServerTS must be converted to UTC.
+	now := time.Date(2026, 11, 9, 15, 0, 0, 0, time.FixedZone("UTC+3", 3*60*60))
+
+	const (
+		idPlain     = "11111111-1111-4111-8111-111111111111"
+		idLongValue = "22222222-2222-4222-8222-222222222222"
+		idMaxValue  = "33333333-3333-4333-8333-333333333333"
+	)
+	events := []Event{
+		eventWith(func(e *Event) { e.ID = idPlain }),
+		eventWith(func(e *Event) { e.ID = "not-a-uuid" }),
+		eventWith(func(e *Event) { e.ID = idLongValue; e.Value = new(strings.Repeat("я", 65)) }),
+		eventWith(func(e *Event) { e.ID = idMaxValue; e.Value = new(strings.Repeat("я", 64)) }),
+	}
+
+	// msg returns validMessage with the given id and value.
+	msg := func(id string, value *string) message.Event {
+		m := validMessage(sessionID, now.UTC())
+		m.EventID = uuid.MustParse(id)
+		m.Value = value
+		return m
+	}
+	want := []message.Event{
+		msg(idPlain, nil),
+		msg(idLongValue, nil),
+		msg(idMaxValue, new(strings.Repeat("я", 64))),
+	}
+
+	p := &stubPublisher{}
+	s := NewEvents(slog.New(slog.DiscardHandler), p)
+	s.now = func() time.Time { return now }
+
+	ctx := context.WithValue(context.Background(), ctxKey{}, "ingest")
+	res, err := s.Ingest(ctx, Batch{SessionID: sessionID, Events: events})
+	if err != nil {
+		t.Fatalf("Ingest() error = %v, want nil", err)
+	}
+	if wantRes := (IngestResult{Accepted: 3, Skipped: 1}); res != wantRes {
+		t.Errorf("Ingest() = %+v, want %+v", res, wantRes)
+	}
+	if p.calls != 1 {
+		t.Fatalf("Publish() calls = %d, want 1", p.calls)
+	}
+
+	// The order of messages is not part of the contract.
+	byID := cmpopts.SortSlices(func(a, b message.Event) bool { return a.EventID.String() < b.EventID.String() })
+	if diff := cmp.Diff(want, p.got, byID); diff != "" {
+		t.Errorf("published messages mismatch (-want +got):\n%s", diff)
+	}
+	// cmp compares time.Time with Equal, which ignores the location.
+	for _, m := range p.got {
+		if m.ServerTS.Location() != time.UTC {
+			t.Errorf("message %s ServerTS location = %v, want UTC", m.EventID, m.ServerTS.Location())
+		}
+	}
+
+	// Publish may get ctx itself or a ctx derived from it.
+	if p.ctx == nil || p.ctx.Value(ctxKey{}) != "ingest" {
+		t.Errorf("Publish got a ctx that is not derived from the Ingest ctx")
+	}
 }
 
 func TestIngest(t *testing.T) {

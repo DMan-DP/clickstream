@@ -46,6 +46,19 @@ func NewEvents(logger *slog.Logger, eventsService ingester) *Events {
 	}
 }
 
+// ServeHTTP accepts a batch of events as JSON and passes it to the
+// service with the request context. The status is the contract for the
+// client; an error body is {"error": msg} with a short text for people,
+// without internal details.
+//   - 202 with {"accepted": n, "skipped": m}, also when every event of
+//     the batch is skipped;
+//   - 400 for a malformed body, or for a failed request-level check with
+//     the text of validationMessage;
+//   - 413 for a body larger than maxBodyBytes (64 KiB);
+//   - 503 when the service is unavailable or the request deadline is
+//     exceeded, so the client may retry the batch;
+//   - 499 without a body when the client has gone (context.Canceled);
+//   - 500 for any other service error.
 func (h *Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	ctx := r.Context()
@@ -120,6 +133,11 @@ func (h *Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
+// decodeBatch reads exactly one JSON object from r into a batchRequest.
+// Unknown fields are ignored; anything but whitespace after the object is
+// an error. client_ts must be an RFC 3339 string. A missing or null
+// session_id gives uuid.Nil without an error: validate rejects it. Errors
+// wrap the cause, so *http.MaxBytesError is found with errors.As.
 func decodeBatch(r io.Reader) (batchRequest, error) {
 	var req batchRequest
 	dec := json.NewDecoder(r)
@@ -142,6 +160,11 @@ func decodeBatch(r io.Reader) (batchRequest, error) {
 	return batchRequest{}, errors.New("decode batch: body must contain a single JSON object")
 }
 
+// validate runs the request-level checks of req and returns the first
+// failure, wrapping a sentinel error for validationMessage. The checks
+// run in this order: at least one and at most maxBatchSize events
+// (errNoEvents, errTooManyEvents), then a non-nil session_id
+// (errNoSessionID).
 func validate(req batchRequest) error {
 	eventsCount := len(req.Events)
 	if eventsCount == 0 {
@@ -159,6 +182,10 @@ func validate(req batchRequest) error {
 	return nil
 }
 
+// validationMessage returns the text for the client for an error of
+// validate: "No events", "Too many events, max N" or "session_id is
+// missing or invalid". The sentinel errors are found with errors.Is, so
+// they may be wrapped. Any other error gives "Bad request".
 func validationMessage(err error) string {
 	switch {
 	case errors.Is(err, errNoEvents):

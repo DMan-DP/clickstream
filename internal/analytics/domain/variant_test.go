@@ -15,23 +15,44 @@ func TestIsChoice(t *testing.T) {
 			want:  true,
 		},
 		{
-			name:  "change on radio",
+			name:  "change on radio small",
+			event: Event{Type: EventTypeChange, ElementID: "size-small", Value: "small"},
+			want:  true,
+		},
+		{
+			name:  "change on radio medium",
+			event: Event{Type: EventTypeChange, ElementID: "size-medium", Value: "medium"},
+			want:  true,
+		},
+		{
+			name:  "change on radio large",
 			event: Event{Type: EventTypeChange, ElementID: "size-large", Value: "large"},
 			want:  true,
 		},
 		{
-			name:  "change on checkbox checked",
+			name:  "change on checkbox cheese checked",
 			event: Event{Type: EventTypeChange, ElementID: "topping-cheese", Value: "true"},
 			want:  true,
 		},
 		{
-			name:  "change on checkbox unchecked",
+			name:  "change on checkbox mushrooms checked",
+			event: Event{Type: EventTypeChange, ElementID: "topping-mushrooms", Value: "true"},
+			want:  true,
+		},
+		{
+			name:  "change on checkbox jalapeno unchecked",
 			event: Event{Type: EventTypeChange, ElementID: "topping-jalapeno", Value: "false"},
 			want:  true,
 		},
 		{
 			name:  "change on slider",
 			event: Event{Type: EventTypeChange, ElementID: "quantity-slider", Value: "3"},
+			want:  true,
+		},
+		{
+			// Only an empty value is excluded; a space is a value.
+			name:  "change with space value",
+			event: Event{Type: EventTypeChange, ElementID: "pizza-select", Value: " "},
 			want:  true,
 		},
 

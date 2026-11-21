@@ -148,6 +148,32 @@ func TestPartitionStatsFlush(t *testing.T) {
 		}
 	})
 
+	t.Run("uses window size of Stats", func(t *testing.T) {
+		// Not 30s, the default WINDOW_SIZE: a hard-coded size would pass.
+		const minute = time.Minute
+		store := &stubStore{}
+		p := NewStats(minute, store).NewPartition()
+		// With 30s windows these two events would fall into different windows.
+		p.Add(domain.Event{Type: domain.EventTypeClick, ElementID: "submit-order-button", Time: base.Add(10 * time.Second)})
+		p.Add(domain.Event{Type: domain.EventTypeClick, ElementID: "submit-order-button", Time: base.Add(45 * time.Second)})
+
+		if err := p.Flush(context.Background()); err != nil {
+			t.Fatalf("Flush() = %v, want nil", err)
+		}
+		if len(store.saved) != 1 {
+			t.Fatalf("Save calls = %d, want 1", len(store.saved))
+		}
+		if got := store.saved[0].WindowSize; got != minute {
+			t.Errorf("WindowSize = %v, want %v", got, minute)
+		}
+		checkSnapshot(t, store.saved[0],
+			[]domain.CounterRow{
+				{WindowStart: base, Type: domain.EventTypeClick, ElementID: "submit-order-button", Count: 2},
+			},
+			nil,
+		)
+	})
+
 	t.Run("partitions count separately", func(t *testing.T) {
 		store := &stubStore{}
 		stats := NewStats(size, store)

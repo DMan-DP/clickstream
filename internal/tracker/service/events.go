@@ -101,10 +101,14 @@ func NewEvents(logger *slog.Logger, pub publisher) *Events {
 }
 
 // Ingest validates each event of the batch, skips invalid ones and
-// publishes the rest as one batch. A nil error means all accepted events
-// are published. An error wrapping ErrUnavailable or a context error means
-// the batch was not accepted as a whole and the client may retry it; any
-// other error is internal and a retry will not help.
+// publishes the rest as one batch with ctx. A long value is cleared, see
+// Event.Value. ServerTS of every message is the receive time in UTC. If
+// no event is accepted, the publisher is not called and the error is nil.
+//
+// A nil error means all accepted events are published. An error wrapping
+// ErrUnavailable or a context error means the batch was not accepted as a
+// whole and the client may retry it; any other error is internal and a
+// retry will not help. On error the result is zero.
 func (s *Events) Ingest(ctx context.Context, batch Batch) (IngestResult, error) {
 	serverTS := s.now().UTC()
 	var res IngestResult
@@ -154,6 +158,12 @@ func (s *Events) Ingest(ctx context.Context, batch Batch) (IngestResult, error) 
 	return res, nil
 }
 
+// eventToMessage checks e and builds the message for it. The checks run
+// in this order and the first failure is returned: event_id must be a
+// valid non-nil UUID in any form uuid.Parse accepts; type must be in
+// allowedTypes; element_id is trimmed of surrounding whitespace and must
+// be non-empty and at most maxElementIDRunes runes; client_ts must be
+// non-zero. The value is copied as is: Ingest clears long values.
 func eventToMessage(e Event, sessionID uuid.UUID, serverTS time.Time) (message.Event, error) {
 	e.ElementID = strings.TrimSpace(e.ElementID)
 
@@ -193,6 +203,8 @@ func eventToMessage(e Event, sessionID uuid.UUID, serverTS time.Time) (message.E
 	}, nil
 }
 
+// valueTooLong reports whether v is longer than maxValueRunes runes, not
+// bytes. A nil value is never too long.
 func valueTooLong(v *string) bool {
 	return v != nil && utf8.RuneCountInString(*v) > maxValueRunes
 }

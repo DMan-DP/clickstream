@@ -62,6 +62,8 @@ func (p *PartitionStats) Add(e domain.Event) {
 // calling the store. A nil error means the counts are committed, so the
 // caller may mark the read messages as processed. On error the counts
 // are kept and the next Flush saves them, together with any new ones.
+// The returned error is the error of the store, so the caller can check
+// it with errors.Is.
 func (p *PartitionStats) Flush(ctx context.Context) error {
 	s := p.aggregator.Snapshot()
 	if len(s.Counters) == 0 && len(s.Choices) == 0 {

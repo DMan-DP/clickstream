@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,9 +18,14 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
+// TestKafkaTimeouts checks the send budget on the config that NewProducer
+// uses, not on the constants, so a config field set to another value is
+// caught too.
 func TestKafkaTimeouts(t *testing.T) {
-	attempt := dialTimeout + writeTimeout + readTimeout
-	worstCase := (maxRetry+1)*attempt + maxRetry*(retryBackoff+metadataTimeout)
+	c := producerConfig()
+	attempt := c.Net.DialTimeout + c.Net.WriteTimeout + c.Net.ReadTimeout
+	retries := time.Duration(c.Producer.Retry.Max)
+	worstCase := (retries+1)*attempt + retries*(c.Producer.Retry.Backoff+c.Metadata.Timeout)
 
 	t.Run("worst case", func(t *testing.T) {
 		if worstCase > sendBudget {
@@ -30,16 +34,24 @@ func TestKafkaTimeouts(t *testing.T) {
 	})
 
 	t.Run("broker timeout", func(t *testing.T) {
-		if producerTimeout >= readTimeout {
-			t.Errorf("producerTimeout %v must be less than readTimeout %v, otherwise the client gives up before the broker answers", producerTimeout, readTimeout)
+		if c.Producer.Timeout >= c.Net.ReadTimeout {
+			t.Errorf("Producer.Timeout %v must be less than Net.ReadTimeout %v, otherwise the client gives up before the broker answers", c.Producer.Timeout, c.Net.ReadTimeout)
 		}
 	})
 
 	t.Run("metadata timeout", func(t *testing.T) {
-		if metadataTimeout < attempt {
-			t.Errorf("metadataTimeout %v is shorter than one attempt %v", metadataTimeout, attempt)
+		if c.Metadata.Timeout < attempt {
+			t.Errorf("Metadata.Timeout %v is shorter than one attempt %v", c.Metadata.Timeout, attempt)
 		}
 	})
+}
+
+// TestProducerConfigAcks checks that every message must be acknowledged
+// by all in-sync replicas, as NewProducer promises.
+func TestProducerConfigAcks(t *testing.T) {
+	if got := producerConfig().Producer.RequiredAcks; got != sarama.WaitForAll {
+		t.Errorf("RequiredAcks = %v, want %v (WaitForAll)", got, sarama.WaitForAll)
+	}
 }
 
 // stubProducer is a sarama.SyncProducer for tests. SendMessages records the
@@ -131,34 +143,27 @@ func TestKafkaPublish(t *testing.T) {
 		name    string
 		sendErr error
 		// wantErr is checked with errors.Is. nil means Publish succeeds.
+		// The error text is not part of the contract and is not checked.
 		wantErr error
-		// wantErrText must be a substring of the error text: the number of
-		// failed messages and the cause. Empty when wantErr is nil.
-		wantErrText string
 	}{
 		{
-			name:        "all acknowledged",
-			sendErr:     nil,
-			wantErr:     nil,
-			wantErrText: "",
+			name:    "all acknowledged",
+			sendErr: nil,
+			wantErr: nil,
 		},
 		{
-			// SendMessages reports failed messages as sarama.ProducerErrors;
-			// the first error is the cause.
+			// SendMessages reports failed messages as sarama.ProducerErrors.
 			name: "some messages failed",
 			sendErr: sarama.ProducerErrors{
 				{Err: sarama.ErrNotEnoughReplicas},
 				{Err: sarama.ErrRequestTimedOut},
 			},
-			wantErr:     service.ErrUnavailable,
-			wantErrText: "2 of 3 messages failed: " + sarama.ErrNotEnoughReplicas.Error(),
+			wantErr: service.ErrUnavailable,
 		},
 		{
-			// Any other error counts the whole batch as failed.
-			name:        "send failed",
-			sendErr:     errors.New("broker is down"),
-			wantErr:     service.ErrUnavailable,
-			wantErrText: "3 of 3 messages failed: broker is down",
+			name:    "send failed",
+			sendErr: errors.New("broker is down"),
+			wantErr: service.ErrUnavailable,
 		},
 	}
 
@@ -174,9 +179,6 @@ func TestKafkaPublish(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Publish() error = %v, want %v", err, tc.wantErr)
 			}
-			if tc.wantErr != nil && !strings.Contains(err.Error(), tc.wantErrText) {
-				t.Errorf("Publish() error = %q, want it to contain %q", err, tc.wantErrText)
-			}
 
 			// The batch reaches the producer whatever the result of the send.
 			stub.mu.Lock()
@@ -187,17 +189,16 @@ func TestKafkaPublish(t *testing.T) {
 				t.Fatalf("producer got %d messages, want %d", len(msgs), len(events))
 			}
 
+			// One message per event. The order of messages is not part of
+			// the contract, so each message is matched by its event id.
+			want := make(map[uuid.UUID]message.Event, len(events))
+			for _, e := range events {
+				want[e.EventID] = e
+			}
+
 			for i, msg := range msgs {
 				if msg.Topic != testTopic {
 					t.Errorf("message %d topic = %q, want %q", i, msg.Topic, testTopic)
-				}
-
-				key, err := msg.Key.Encode()
-				if err != nil {
-					t.Fatalf("message %d: encode key: %v", i, err)
-				}
-				if want := events[i].SessionID.String(); string(key) != want {
-					t.Errorf("message %d key = %q, want %q", i, key, want)
 				}
 
 				value, err := msg.Value.Encode()
@@ -208,8 +209,24 @@ func TestKafkaPublish(t *testing.T) {
 				if err := json.Unmarshal(value, &got); err != nil {
 					t.Fatalf("message %d: decode value: %v", i, err)
 				}
-				if diff := cmp.Diff(events[i], got); diff != "" {
+
+				e, ok := want[got.EventID]
+				if !ok {
+					t.Errorf("message %d: event %s is unknown or sent twice", i, got.EventID)
+					continue
+				}
+				delete(want, got.EventID)
+
+				if diff := cmp.Diff(e, got); diff != "" {
 					t.Errorf("message %d value mismatch (-want +got):\n%s", i, diff)
+				}
+
+				key, err := msg.Key.Encode()
+				if err != nil {
+					t.Fatalf("message %d: encode key: %v", i, err)
+				}
+				if want := e.SessionID.String(); string(key) != want {
+					t.Errorf("message %d key = %q, want %q", i, key, want)
 				}
 			}
 		})
@@ -273,9 +290,6 @@ func TestKafkaPublishDeadlineWhileSending(t *testing.T) {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("Publish() error = %v, want %v", err, context.DeadlineExceeded)
 		}
-		if want := "wait for send result"; !strings.Contains(err.Error(), want) {
-			t.Errorf("Publish() error = %q, want it to contain %q", err, want)
-		}
 
 		select {
 		case <-stub.started:
@@ -285,15 +299,23 @@ func TestKafkaPublishDeadlineWhileSending(t *testing.T) {
 	})
 }
 
+// TestKafkaPublishNoFreeSlot checks the limit through behaviour, not
+// through the slots channel: maxInFlight sends run at the same time, and
+// the next Publish waits until ctx is done without starting a send.
 func TestKafkaPublishNoFreeSlot(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		stub := newStubProducer(nil, 1)
-		stub.releaseOnce()
+		stub := newStubProducer(nil, maxInFlight+1)
 		k := NewKafka(stub, testTopic)
+		// Cleanups run in reverse order: release the sends, then close.
 		t.Cleanup(func() { k.Close() })
+		t.Cleanup(stub.releaseOnce)
 
-		for range cap(k.slots) {
-			k.slots <- struct{}{}
+		for range maxInFlight {
+			go k.Publish(context.Background(), testEvents())
+		}
+		synctest.Wait()
+		if n := len(stub.started); n != maxInFlight {
+			t.Fatalf("%d sends running, want %d", n, maxInFlight)
 		}
 
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
@@ -303,14 +325,30 @@ func TestKafkaPublishNoFreeSlot(t *testing.T) {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("Publish() error = %v, want %v", err, context.DeadlineExceeded)
 		}
-		if want := "wait for send slot"; !strings.Contains(err.Error(), want) {
-			t.Errorf("Publish() error = %q, want it to contain %q", err, want)
-		}
 
-		select {
-		case <-stub.started:
-			t.Error("send started without a free slot")
-		default:
+		synctest.Wait()
+		if n := len(stub.started); n != maxInFlight {
+			t.Errorf("%d sends started, want %d: a send started without a free slot", n, maxInFlight)
+		}
+	})
+}
+
+// TestKafkaPublishReleasesSlot checks that a finished send gives its slot
+// back: more than maxInFlight sends in a row all succeed.
+func TestKafkaPublishReleasesSlot(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		stub := newStubProducer(nil, maxInFlight+1)
+		stub.releaseOnce()
+		k := NewKafka(stub, testTopic)
+		t.Cleanup(func() { k.Close() })
+
+		for i := range maxInFlight + 1 {
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			err := k.Publish(ctx, testEvents())
+			cancel()
+			if err != nil {
+				t.Fatalf("Publish() #%d error = %v, want nil", i+1, err)
+			}
 		}
 	})
 }
@@ -338,6 +376,53 @@ func TestKafkaPublishAfterClose(t *testing.T) {
 	if n := len(k.slots); n != 0 {
 		t.Errorf("%d send slots taken after Publish returned, want 0", n)
 	}
+}
+
+// TestKafkaCloseWhileClosing checks that a Close made while another Close
+// is waiting for a send returns nil at once, before the producer is closed.
+func TestKafkaCloseWhileClosing(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		stub := newStubProducer(nil, 1)
+		// Unblocks the send if the test fails before releasing it.
+		t.Cleanup(stub.releaseOnce)
+		k := NewKafka(stub, testTopic)
+
+		published := make(chan error, 1)
+		go func() { published <- k.Publish(context.Background(), testEvents()) }()
+		<-stub.started
+
+		first := make(chan error, 1)
+		go func() { first <- k.Close() }()
+		synctest.Wait()
+
+		second := make(chan error, 1)
+		go func() { second <- k.Close() }()
+		synctest.Wait()
+
+		select {
+		case err := <-second:
+			if err != nil {
+				t.Errorf("second Close() error = %v, want nil", err)
+			}
+		default:
+			t.Fatal("second Close() waits for the first one, want it to return at once")
+		}
+		if n := stub.closeCalls.Load(); n != 0 {
+			t.Fatalf("producer closed %d times while a send is running, want 0", n)
+		}
+
+		stub.releaseOnce()
+
+		if err := <-published; err != nil {
+			t.Errorf("Publish() error = %v, want nil", err)
+		}
+		if err := <-first; err != nil {
+			t.Errorf("first Close() error = %v, want nil", err)
+		}
+		if n := stub.closeCalls.Load(); n != 1 {
+			t.Errorf("producer closed %d times, want 1", n)
+		}
+	})
 }
 
 func TestKafkaCloseTwice(t *testing.T) {

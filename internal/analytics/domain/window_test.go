@@ -63,6 +63,16 @@ func TestWindowStart(t *testing.T) {
 			size: 5 * time.Minute,
 			want: time.Date(2026, 11, 20, 10, 15, 0, 0, time.UTC),
 		},
+		{
+			// 7s does not divide a day, so windows counted from the zero
+			// time and from the Unix epoch differ. From the zero time to
+			// 10:15:17 there are 63930766517 s; 63930766517 mod 7 = 2,
+			// so the window starts 2 s earlier.
+			name: "window not dividing a day counts from zero time",
+			t:    time.Date(2026, 11, 20, 10, 15, 17, 0, time.UTC),
+			size: 7 * time.Second,
+			want: time.Date(2026, 11, 20, 10, 15, 15, 0, time.UTC),
+		},
 	}
 
 	for _, tc := range tests {

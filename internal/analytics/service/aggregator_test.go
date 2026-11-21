@@ -179,6 +179,30 @@ func TestAggregator(t *testing.T) {
 	}
 }
 
+// TestAggregatorWindowSize checks that the Aggregator uses the window size
+// passed to NewAggregator. The other tests use 30s, the default
+// WINDOW_SIZE, so a hard-coded size would pass them.
+func TestAggregatorWindowSize(t *testing.T) {
+	const size = time.Minute
+	base := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+
+	a := NewAggregator(size)
+	// With 30s windows these two events would fall into different windows.
+	a.Add(domain.Event{Type: domain.EventTypeClick, ElementID: "submit-order-button", Time: base.Add(10 * time.Second)})
+	a.Add(domain.Event{Type: domain.EventTypeClick, ElementID: "submit-order-button", Time: base.Add(45 * time.Second)})
+
+	s := a.Snapshot()
+	if s.WindowSize != size {
+		t.Errorf("WindowSize = %v, want %v", s.WindowSize, size)
+	}
+	checkSnapshot(t, s,
+		[]domain.CounterRow{
+			{WindowStart: base, Type: domain.EventTypeClick, ElementID: "submit-order-button", Count: 2},
+		},
+		nil,
+	)
+}
+
 // TestAggregatorSnapshotKeepsCounts checks that Snapshot does not reset
 // the Aggregator: a second call returns the same rows.
 func TestAggregatorSnapshotKeepsCounts(t *testing.T) {

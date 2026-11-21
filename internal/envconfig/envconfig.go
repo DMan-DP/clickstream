@@ -91,8 +91,9 @@ func List(key string) ([]string, error) {
 	return items, nil
 }
 
-// logLevel reads a log level in lower case. An unset or empty variable
-// means info.
+// logLevel reads a log level: debug, info, warn or error, exactly in lower
+// case and without spaces. An unset or empty variable means info; any
+// other value is an error.
 func logLevel(key string) (slog.Level, error) {
 	var lvl slog.Level
 
