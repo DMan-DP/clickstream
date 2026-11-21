@@ -34,11 +34,9 @@ type Aggregator struct {
 // NewAggregator returns an empty Aggregator with windows of windowSize.
 // windowSize must be positive.
 func NewAggregator(windowSize time.Duration) *Aggregator {
-	return &Aggregator{
-		windowSize: windowSize,
-		counters:   make(map[counterKey]int64),
-		choices:    make(map[choiceKey]int64),
-	}
+	a := &Aggregator{windowSize: windowSize}
+	a.Reset()
+	return a
 }
 
 // Add counts e in the window of its Time. A choice event, see IsChoice,
@@ -65,8 +63,10 @@ func (a *Aggregator) Add(e domain.Event) {
 	}
 }
 
-// Snapshot returns the counts since the previous call and resets the
-// Aggregator. Rows are in no particular order.
+// Snapshot returns the counts accumulated since the last Reset. It does
+// not change the Aggregator: call Reset only after the snapshot is
+// saved, so a failed write keeps the counts for the next attempt. Rows
+// are in no particular order.
 func (a *Aggregator) Snapshot() domain.Snapshot {
 	counters := make([]domain.CounterRow, 0, len(a.counters))
 	for ck, count := range a.counters {
@@ -90,12 +90,16 @@ func (a *Aggregator) Snapshot() domain.Snapshot {
 		choices = append(choices, row)
 	}
 
-	a.counters = make(map[counterKey]int64)
-	a.choices = make(map[choiceKey]int64)
-
 	return domain.Snapshot{
 		WindowSize: a.windowSize,
 		Counters:   counters,
 		Choices:    choices,
 	}
+}
+
+// Reset drops all counts. Call it after the Snapshot is saved and
+// before the next Add: counts added in between are lost.
+func (a *Aggregator) Reset() {
+	a.counters = make(map[counterKey]int64)
+	a.choices = make(map[choiceKey]int64)
 }

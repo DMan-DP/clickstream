@@ -174,26 +174,71 @@ func TestAggregator(t *testing.T) {
 				t.Errorf("WindowSize = %v, want %v", s.WindowSize, size)
 			}
 
-			slices.SortFunc(tc.wantCounters, compareCounterRows)
-			slices.SortFunc(s.Counters, compareCounterRows)
-			if !slices.Equal(tc.wantCounters, s.Counters) {
-				t.Errorf("Counters =\n%+v\nwant\n%+v", s.Counters, tc.wantCounters)
-			}
-
-			slices.SortFunc(tc.wantChoices, compareChoiceRows)
-			slices.SortFunc(s.Choices, compareChoiceRows)
-			if !slices.Equal(tc.wantChoices, s.Choices) {
-				t.Errorf("Choices =\n%+v\nwant\n%+v", s.Choices, tc.wantChoices)
-			}
-
-			if len(a.counters) != 0 || a.counters == nil {
-				t.Errorf("after Snapshot counters = %+v, want empty non-nil map", a.counters)
-			}
-
-			if len(a.choices) != 0 || a.choices == nil {
-				t.Errorf("after Snapshot choices = %+v, want empty non-nil map", a.choices)
-			}
+			checkSnapshot(t, s, tc.wantCounters, tc.wantChoices)
 		})
+	}
+}
+
+// TestAggregatorSnapshotKeepsCounts checks that Snapshot does not reset
+// the Aggregator: a second call returns the same rows.
+func TestAggregatorSnapshotKeepsCounts(t *testing.T) {
+	const size = 30 * time.Second
+	base := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+
+	a := NewAggregator(size)
+	a.Add(domain.Event{Type: domain.EventTypeClick, ElementID: "submit-order-button", Time: base.Add(1 * time.Second)})
+	a.Add(domain.Event{Type: domain.EventTypeChange, ElementID: "size-large", Value: "large", Time: base.Add(2 * time.Second)})
+
+	wantCounters := []domain.CounterRow{
+		{WindowStart: base, Type: domain.EventTypeClick, ElementID: "submit-order-button", Count: 1},
+		{WindowStart: base, Type: domain.EventTypeChange, ElementID: "size-large", Count: 1},
+	}
+	wantChoices := []domain.ChoiceRow{
+		{WindowStart: base, ElementID: "size-large", Value: "large", Count: 1},
+	}
+
+	checkSnapshot(t, a.Snapshot(), wantCounters, wantChoices)
+	checkSnapshot(t, a.Snapshot(), wantCounters, wantChoices)
+}
+
+// TestAggregatorReset checks that Reset drops all counts and counting
+// starts from zero after it.
+func TestAggregatorReset(t *testing.T) {
+	const size = 30 * time.Second
+	base := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	click := domain.Event{Type: domain.EventTypeClick, ElementID: "submit-order-button", Time: base.Add(1 * time.Second)}
+
+	a := NewAggregator(size)
+	a.Add(click)
+	a.Add(domain.Event{Type: domain.EventTypeChange, ElementID: "size-large", Value: "large", Time: base.Add(2 * time.Second)})
+
+	a.Reset()
+	checkSnapshot(t, a.Snapshot(), nil, nil)
+
+	a.Add(click)
+	checkSnapshot(t, a.Snapshot(),
+		[]domain.CounterRow{
+			{WindowStart: base, Type: domain.EventTypeClick, ElementID: "submit-order-button", Count: 1},
+		},
+		nil,
+	)
+}
+
+// checkSnapshot compares the rows of s with the wanted rows, ignoring
+// their order.
+func checkSnapshot(t *testing.T, s domain.Snapshot, wantCounters []domain.CounterRow, wantChoices []domain.ChoiceRow) {
+	t.Helper()
+
+	slices.SortFunc(wantCounters, compareCounterRows)
+	slices.SortFunc(s.Counters, compareCounterRows)
+	if !slices.Equal(wantCounters, s.Counters) {
+		t.Errorf("Counters =\n%+v\nwant\n%+v", s.Counters, wantCounters)
+	}
+
+	slices.SortFunc(wantChoices, compareChoiceRows)
+	slices.SortFunc(s.Choices, compareChoiceRows)
+	if !slices.Equal(wantChoices, s.Choices) {
+		t.Errorf("Choices =\n%+v\nwant\n%+v", s.Choices, wantChoices)
 	}
 }
 
