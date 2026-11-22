@@ -35,7 +35,8 @@ migrations/               PostgreSQL schema
 queries/                  SQL queries over the stored counters
 frontend/                 demo page and tracker
 nginx/                    nginx config: serves frontend/, proxies /events to tracker-api
-docker-compose.yml        Kafka, kafka-ui, PostgreSQL, topic creation, migrations, nginx
+Dockerfile                service image, the SERVICE argument selects the binary
+docker-compose.yml        Kafka, kafka-ui, PostgreSQL, topic, migrations, both services, nginx
 ```
 
 ## Event format
@@ -76,7 +77,7 @@ Every event gets an `event_id` on the client, so a retry can be told apart from 
 
 ## Running
 
-You need Docker and Go.
+You need Docker. Go is needed only for the tests and for running a service on the host.
 
 1. Copy the settings and change the password if you like:
 
@@ -84,35 +85,58 @@ You need Docker and Go.
    cp .env.example .env
    ```
 
-2. Start the infrastructure:
+2. Build the images and start everything:
 
    ```
-   docker compose up -d
+   docker compose up -d --build
    ```
 
-   Compose creates the `user-events` topic with 3 partitions and applies the migrations. The Kafka UI is at http://localhost:8090, PostgreSQL listens on port 5433 (POSTGRES_PORT).
+   Compose creates the `user-events` topic with 3 partitions, applies the migrations, then starts `tracker-api` and `analytics-processor`, and starts nginx once `tracker-api` is healthy.
 
-   The demo page is at http://localhost:3000. It is served by nginx, which also proxies `POST /events` to `tracker-api` on the host (`TRACKER_API_URL` in `.env`), so the page and the API share one origin and no CORS is needed. Changes in `frontend/` show up after a page reload, no restart is needed.
+   - Demo page: http://localhost:3000. It is served by nginx, which also proxies `POST /events` to `tracker-api`, so the page and the API share one origin and no CORS is needed. Changes in `frontend/` show up after a page reload.
+   - `tracker-api` directly: `curl http://localhost:8080/health` returns `200` (port TRACKER_API_PORT).
+   - Kafka UI: http://localhost:8090.
+   - PostgreSQL: port 5433 (POSTGRES_PORT), the counters reach the tables FLUSH_INTERVAL after the events, see [Queries](#queries).
 
-3. Run `tracker-api` on the host. The environment variables are described in `.env.example`.
-
-   VS Code: the `tracker-api` launch configuration (F5) takes the variables from `.env` and runs the service under the debugger.
-
-   Or from the terminal, setting the variables by hand.
-
-   Bash:
+   Service logs:
 
    ```
-   KAFKA_BROKERS=localhost:9092 KAFKA_TOPIC=user-events go run ./cmd/tracker-api
+   docker compose logs -f analytics-processor
    ```
 
-   PowerShell:
+3. Stopping: `docker compose stop` keeps the containers, `docker compose down` removes them, `docker compose down -v` also removes the Kafka and PostgreSQL data.
 
-   ```
-   $env:KAFKA_BROKERS="localhost:9092"; $env:KAFKA_TOPIC="user-events"; go run ./cmd/tracker-api
-   ```
+After a change in the Go code, rebuild the image: `docker compose up -d --build tracker-api` (or `analytics-processor`).
 
-   Check: `curl http://localhost:8080/health` returns `200`. Then open http://localhost:3000: the `POST /events` requests in DevTools get `202`. While `tracker-api` is not running, nginx answers `502` and the tracker keeps the events and retries.
+### A service on the host, under the debugger
+
+Stop the service container first, otherwise port 8080 is taken, and a second `analytics-processor` joins the same group and takes over some partitions:
+
+```
+docker compose stop tracker-api
+```
+
+For `tracker-api`, also point nginx at the host: set `TRACKER_API_URL=http://host.docker.internal:8080` in `.env` and recreate only nginx (`--no-deps`, so compose does not start the `tracker-api` container again):
+
+```
+docker compose up -d --no-deps frontend
+```
+
+Then start the service. VS Code: the `tracker-api` and `analytics-processor` launch configurations (F5) take the variables from `.env`. Or from the terminal, setting the variables from `.env.example` by hand, for example for `tracker-api`:
+
+Bash:
+
+```
+KAFKA_BROKERS=localhost:9092 KAFKA_TOPIC=user-events go run ./cmd/tracker-api
+```
+
+PowerShell:
+
+```
+$env:KAFKA_BROKERS="localhost:9092"; $env:KAFKA_TOPIC="user-events"; go run ./cmd/tracker-api
+```
+
+While `tracker-api` is not running, nginx answers `502` and the tracker keeps the events and retries. To move everything back into containers: set `TRACKER_API_URL=http://tracker-api:8080` in `.env` again and run `docker compose up -d`.
 
 Tests:
 
@@ -154,4 +178,4 @@ Work in progress.
 - [x] Receiving events with `POST /events`
 - [x] Publishing to Kafka
 - [x] `analytics-processor`: reading from Kafka, window aggregation, writing to PostgreSQL
-- [ ] Docker images for the services
+- [x] Docker images for the services, the whole stack starts with one command

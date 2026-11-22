@@ -1,0 +1,12 @@
+# Build context for Dockerfile: only what go build needs. Everything is
+# excluded, then the module files and the Go sources are allowed back, so
+# local secrets, binaries and editor files never reach the image.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+
+# Tests are not compiled by go build; editing them must not invalidate
+# the build cache.
+**/*_test.go

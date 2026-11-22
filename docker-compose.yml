@@ -102,16 +102,89 @@ services:
       - ./migrations:/migrations:ro
     restart: "no"
 
+  # Event intake: HTTP on :8080, publishes events to Kafka.
+  # Port on the host for curl: http://localhost:8080
+  tracker-api:
+    build:
+      context: .
+      args:
+        SERVICE: tracker-api
+    image: clickstream/tracker-api
+    container_name: clickstream-tracker-api
+    depends_on:
+      kafka:
+        condition: service_healthy
+      # Topic auto-creation is off: the topic must exist before the first event
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "${TRACKER_API_PORT:-8080}:8080"
+    environment:
+      HTTP_ADDR: :8080
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-user-events}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    healthcheck:
+      # Liveness only: /health does not check Kafka
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    # docker stop waits 10 s by default before SIGKILL. Stopping takes
+    # Shutdown (up to 10 s) plus Close waiting for the background sends
+    # (up to about 8 s under load with Kafka down).
+    stop_grace_period: 20s
+
+  # Aggregation: reads events from Kafka as a consumer group member, writes
+  # window counts to PostgreSQL. No HTTP, so no healthcheck.
+  # No container_name: it would block scaling. Several instances share the
+  # topic partitions: docker compose up -d --scale analytics-processor=3
+  analytics-processor:
+    build:
+      context: .
+      args:
+        SERVICE: analytics-processor
+    image: clickstream/analytics-processor
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      # Tables must exist before the first write
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-user-events}
+      KAFKA_GROUP_ID: ${KAFKA_GROUP_ID:-analytics-processor}
+      WINDOW_SIZE: ${WINDOW_SIZE:-30s}
+      FLUSH_INTERVAL: ${FLUSH_INTERVAL:-5s}
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      DB_MAX_CONNS: ${DB_MAX_CONNS:-10}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    # SIGTERM while joining the group waits for the rebalance to end (up to
+    # Rebalance.Timeout, 60 s), then the final write to PostgreSQL.
+    stop_grace_period: 75s
+
   # Demo page and reverse proxy: /events goes to tracker-api, so the page
   # and the API share one origin. Page: http://localhost:3000
   frontend:
     image: nginx:1.28.0-alpine
     container_name: clickstream-frontend
+    # nginx resolves the upstream name once at start and exits if it is
+    # unknown, so tracker-api must be running first
+    depends_on:
+      tracker-api:
+        condition: service_healthy
     ports:
       - "${FRONTEND_PORT:-3000}:80"
     environment:
-      # tracker-api started on the host with go run; in compose: http://tracker-api:8080
-      TRACKER_API_URL: ${TRACKER_API_URL:-http://host.docker.internal:8080}
+      # tracker-api in compose by default; for tracker-api started on the
+      # host (debugger, go run): http://host.docker.internal:8080
+      TRACKER_API_URL: ${TRACKER_API_URL:-http://tracker-api:8080}
     extra_hosts:
       # Docker Desktop resolves host.docker.internal itself, Linux needs this line
       - "host.docker.internal:host-gateway"
