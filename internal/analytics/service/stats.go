@@ -22,16 +22,19 @@ type statsStore interface {
 // Stats serves the whole process; each partition gets its own
 // PartitionStats.
 type Stats struct {
-	windowSize time.Duration
-	store      statsStore
+	windowSize     time.Duration
+	sessionTimeout time.Duration
+	store          statsStore
 }
 
 // NewStats returns a Stats with windows of windowSize that saves the
-// counts to store. windowSize must be positive.
-func NewStats(windowSize time.Duration, store statsStore) *Stats {
+// counts to store. A funnel session expires after sessionTimeout without
+// events, see NewAggregator. Both durations must be positive.
+func NewStats(windowSize, sessionTimeout time.Duration, store statsStore) *Stats {
 	return &Stats{
-		windowSize: windowSize,
-		store:      store,
+		windowSize:     windowSize,
+		sessionTimeout: sessionTimeout,
+		store:          store,
 	}
 }
 
@@ -47,7 +50,7 @@ type PartitionStats struct {
 // it at the start of ConsumeClaim; the result belongs to that goroutine.
 func (s *Stats) NewPartition() *PartitionStats {
 	return &PartitionStats{
-		aggregator: NewAggregator(s.windowSize),
+		aggregator: NewAggregator(s.windowSize, s.sessionTimeout),
 		store:      s.store,
 	}
 }
@@ -59,15 +62,20 @@ func (p *PartitionStats) Add(e domain.Event) {
 }
 
 // Flush saves the counts added since the last successful Flush, passing
-// ctx to the store. If there is nothing to save, it returns nil without
-// calling the store. A nil error means the counts are committed, so the
-// caller may mark the read messages as processed. On error the counts
-// are kept and the next Flush saves them, together with any new ones.
-// The returned error is the error of the store, so the caller can check
-// it with errors.Is.
+// ctx to the store. It also drops the expired funnel sessions, whether
+// the write succeeds or not. If there is nothing to save, it returns nil
+// without calling the store. A nil error means the counts are committed,
+// so the caller may mark the read messages as processed. On error the
+// counts are kept and the next Flush saves them, together with any new
+// ones. The returned error is the error of the store, so the caller can
+// check it with errors.Is.
 func (p *PartitionStats) Flush(ctx context.Context) error {
+	defer p.aggregator.DropExpiredSessions()
+
 	s := p.aggregator.Snapshot()
-	if len(s.Counters) == 0 && len(s.Choices) == 0 {
+	if len(s.Counters) == 0 &&
+		len(s.Choices) == 0 &&
+		len(s.Funnel) == 0 {
 		return nil
 	}
 

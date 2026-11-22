@@ -12,15 +12,16 @@ import (
 
 // Config holds the analytics-processor settings: the shared ones from
 // envconfig.Base, the consumer group id, the aggregation window size, the
-// interval of writes to the database and the PostgreSQL connection string
-// with the pool size limit.
+// funnel session timeout, the interval of writes to the database and the
+// PostgreSQL connection string with the pool size limit.
 type Config struct {
 	envconfig.Base
-	KafkaGroupID  string
-	WindowSize    time.Duration
-	FlushInterval time.Duration
-	DSN           string
-	DBMaxConns    int
+	KafkaGroupID   string
+	WindowSize     time.Duration
+	SessionTimeout time.Duration
+	FlushInterval  time.Duration
+	DSN            string
+	DBMaxConns     int
 }
 
 // GetConfig reads the settings from environment variables and validates them.
@@ -39,6 +40,17 @@ func GetConfig() (*Config, error) {
 
 	if windowSize <= 0 || windowSize%time.Second != 0 {
 		return nil, fmt.Errorf("%s: invalid value %q, want a positive whole number of seconds", key, s)
+	}
+
+	key = "SESSION_TIMEOUT"
+	s = envconfig.OrDefault(key, "30m")
+	sessionTimeout, err := time.ParseDuration(s)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", key, err)
+	}
+
+	if sessionTimeout <= 0 {
+		return nil, fmt.Errorf("%s: invalid value %q, want a positive duration", key, s)
 	}
 
 	key = "FLUSH_INTERVAL"
@@ -65,11 +77,12 @@ func GetConfig() (*Config, error) {
 	}
 
 	return &Config{
-		Base:          base,
-		KafkaGroupID:  envconfig.OrDefault("KAFKA_GROUP_ID", "analytics-processor"),
-		WindowSize:    windowSize,
-		FlushInterval: flushInterval,
-		DSN:           dsn,
-		DBMaxConns:    maxConns,
+		Base:           base,
+		KafkaGroupID:   envconfig.OrDefault("KAFKA_GROUP_ID", "analytics-processor"),
+		WindowSize:     windowSize,
+		SessionTimeout: sessionTimeout,
+		FlushInterval:  flushInterval,
+		DSN:            dsn,
+		DBMaxConns:     maxConns,
 	}, nil
 }

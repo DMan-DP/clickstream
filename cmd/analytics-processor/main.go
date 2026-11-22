@@ -41,7 +41,7 @@ func run(logger *slog.Logger, cfg *config.Config) (err error) {
 		return err
 	}
 
-	stats := service.NewStats(cfg.WindowSize, db)
+	stats := service.NewStats(cfg.WindowSize, cfg.SessionTimeout, db)
 	handler := consumer.NewHandler(logger.With("component", "consumer"), stats, cfg.FlushInterval)
 
 	var wg sync.WaitGroup

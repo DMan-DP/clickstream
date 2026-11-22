@@ -38,7 +38,7 @@ func TestPartitionStatsFlush(t *testing.T) {
 
 	t.Run("nothing added", func(t *testing.T) {
 		store := &stubStore{}
-		p := NewStats(size, store).NewPartition()
+		p := NewStats(size, testSessionTimeout, store).NewPartition()
 
 		if err := p.Flush(context.Background()); err != nil {
 			t.Fatalf("Flush() = %v, want nil", err)
@@ -50,7 +50,7 @@ func TestPartitionStatsFlush(t *testing.T) {
 
 	t.Run("saves added counts once", func(t *testing.T) {
 		store := &stubStore{}
-		p := NewStats(size, store).NewPartition()
+		p := NewStats(size, testSessionTimeout, store).NewPartition()
 		p.Add(click)
 		p.Add(choice)
 
@@ -84,7 +84,7 @@ func TestPartitionStatsFlush(t *testing.T) {
 
 	t.Run("failed save is retried with new counts", func(t *testing.T) {
 		store := &stubStore{errs: []error{errSave}}
-		p := NewStats(size, store).NewPartition()
+		p := NewStats(size, testSessionTimeout, store).NewPartition()
 
 		p.Add(click)
 		if err := p.Flush(context.Background()); !errors.Is(err, errSave) {
@@ -109,7 +109,7 @@ func TestPartitionStatsFlush(t *testing.T) {
 
 	t.Run("failed save is retried without new counts", func(t *testing.T) {
 		store := &stubStore{errs: []error{errSave}}
-		p := NewStats(size, store).NewPartition()
+		p := NewStats(size, testSessionTimeout, store).NewPartition()
 
 		p.Add(click)
 		if err := p.Flush(context.Background()); !errors.Is(err, errSave) {
@@ -133,7 +133,7 @@ func TestPartitionStatsFlush(t *testing.T) {
 
 	t.Run("passes ctx to store", func(t *testing.T) {
 		store := &stubStore{}
-		p := NewStats(size, store).NewPartition()
+		p := NewStats(size, testSessionTimeout, store).NewPartition()
 		p.Add(click)
 
 		// Save may get ctx itself or a ctx derived from it, so the test
@@ -152,7 +152,7 @@ func TestPartitionStatsFlush(t *testing.T) {
 		// Not 30s, the default WINDOW_SIZE: a hard-coded size would pass.
 		const minute = time.Minute
 		store := &stubStore{}
-		p := NewStats(minute, store).NewPartition()
+		p := NewStats(minute, testSessionTimeout, store).NewPartition()
 		// With 30s windows these two events would fall into different windows.
 		p.Add(domain.Event{Type: domain.EventTypeClick, ElementID: "submit-order-button", Time: base.Add(10 * time.Second)})
 		p.Add(domain.Event{Type: domain.EventTypeClick, ElementID: "submit-order-button", Time: base.Add(45 * time.Second)})
@@ -176,7 +176,7 @@ func TestPartitionStatsFlush(t *testing.T) {
 
 	t.Run("partitions count separately", func(t *testing.T) {
 		store := &stubStore{}
-		stats := NewStats(size, store)
+		stats := NewStats(size, testSessionTimeout, store)
 		p1 := stats.NewPartition()
 		p2 := stats.NewPartition()
 		p1.Add(click)

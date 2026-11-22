@@ -9,6 +9,10 @@ import (
 	"github.com/DMan-DP/clickstream/internal/analytics/domain"
 )
 
+// testSessionTimeout is the funnel session timeout for tests that check
+// other things: the default SESSION_TIMEOUT.
+const testSessionTimeout = 30 * time.Minute
+
 func TestAggregator(t *testing.T) {
 	const size = 30 * time.Second
 
@@ -164,7 +168,7 @@ func TestAggregator(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			a := NewAggregator(size)
+			a := NewAggregator(size, testSessionTimeout)
 			for _, e := range tc.events {
 				a.Add(e)
 			}
@@ -186,7 +190,7 @@ func TestAggregatorWindowSize(t *testing.T) {
 	const size = time.Minute
 	base := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
 
-	a := NewAggregator(size)
+	a := NewAggregator(size, testSessionTimeout)
 	// With 30s windows these two events would fall into different windows.
 	a.Add(domain.Event{Type: domain.EventTypeClick, ElementID: "submit-order-button", Time: base.Add(10 * time.Second)})
 	a.Add(domain.Event{Type: domain.EventTypeClick, ElementID: "submit-order-button", Time: base.Add(45 * time.Second)})
@@ -209,7 +213,7 @@ func TestAggregatorSnapshotKeepsCounts(t *testing.T) {
 	const size = 30 * time.Second
 	base := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
 
-	a := NewAggregator(size)
+	a := NewAggregator(size, testSessionTimeout)
 	a.Add(domain.Event{Type: domain.EventTypeClick, ElementID: "submit-order-button", Time: base.Add(1 * time.Second)})
 	a.Add(domain.Event{Type: domain.EventTypeChange, ElementID: "size-large", Value: "large", Time: base.Add(2 * time.Second)})
 
@@ -232,7 +236,7 @@ func TestAggregatorReset(t *testing.T) {
 	base := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
 	click := domain.Event{Type: domain.EventTypeClick, ElementID: "submit-order-button", Time: base.Add(1 * time.Second)}
 
-	a := NewAggregator(size)
+	a := NewAggregator(size, testSessionTimeout)
 	a.Add(click)
 	a.Add(domain.Event{Type: domain.EventTypeChange, ElementID: "size-large", Value: "large", Time: base.Add(2 * time.Second)})
 

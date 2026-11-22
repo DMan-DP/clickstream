@@ -33,6 +33,21 @@ type ChoiceRow struct {
 	Count int64
 }
 
+// FunnelRow is the number of sessions that reached one funnel step
+// for the first time in one window.
+type FunnelRow struct {
+	// WindowStart is the start of the window, see WindowStart.
+	WindowStart time.Time
+
+	// Step is the funnel step, never FunnelStepNone.
+	Step FunnelStep
+
+	// Sessions is the number of sessions that reached the step in the
+	// window. A session is counted once per step, in the window of the
+	// event that took it there.
+	Sessions int64
+}
+
 // Snapshot is the state of the aggregator since the previous write.
 // A window may be partial: the rest of it comes in the next snapshot,
 // so rows with the same key must be added up on write.
@@ -45,4 +60,7 @@ type Snapshot struct {
 
 	// Choices are the selected values, in no particular order.
 	Choices []ChoiceRow
+
+	// Funnel are the funnel step counters, in no particular order.
+	Funnel []FunnelRow
 }
