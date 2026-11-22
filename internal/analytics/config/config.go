@@ -11,14 +11,16 @@ import (
 )
 
 // Config holds the analytics-processor settings: the shared ones from
-// envconfig.Base, the consumer group id, the aggregation window size and
-// the PostgreSQL connection string with the pool size limit.
+// envconfig.Base, the consumer group id, the aggregation window size, the
+// interval of writes to the database and the PostgreSQL connection string
+// with the pool size limit.
 type Config struct {
 	envconfig.Base
-	KafkaGroupID string
-	WindowSize   time.Duration
-	DSN          string
-	DBMaxConns   int
+	KafkaGroupID  string
+	WindowSize    time.Duration
+	FlushInterval time.Duration
+	DSN           string
+	DBMaxConns    int
 }
 
 // GetConfig reads the settings from environment variables and validates them.
@@ -28,14 +30,26 @@ func GetConfig() (*Config, error) {
 		return nil, err
 	}
 
-	s := envconfig.OrDefault("WINDOW_SIZE", "30s")
-	ws, err := time.ParseDuration(s)
+	key := "WINDOW_SIZE"
+	s := envconfig.OrDefault(key, "30s")
+	windowSize, err := time.ParseDuration(s)
 	if err != nil {
-		return nil, fmt.Errorf("WINDOW_SIZE: %w", err)
+		return nil, fmt.Errorf("%s: %w", key, err)
 	}
 
-	if ws <= 0 || ws%time.Second != 0 {
-		return nil, fmt.Errorf("WINDOW_SIZE: invalid value %q, want a positive duration", s)
+	if windowSize <= 0 || windowSize%time.Second != 0 {
+		return nil, fmt.Errorf("%s: invalid value %q, want a positive whole number of seconds", key, s)
+	}
+
+	key = "FLUSH_INTERVAL"
+	s = envconfig.OrDefault(key, "5s")
+	flushInterval, err := time.ParseDuration(s)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", key, err)
+	}
+
+	if flushInterval <= 0 {
+		return nil, fmt.Errorf("%s: invalid value %q, want a positive whole number of seconds", key, s)
 	}
 
 	dsn, err := envconfig.Required("DATABASE_URL")
@@ -43,17 +57,19 @@ func GetConfig() (*Config, error) {
 		return nil, err
 	}
 
-	s = envconfig.OrDefault("DB_MAX_CONNS", "10")
+	key = "DB_MAX_CONNS"
+	s = envconfig.OrDefault(key, "10")
 	maxConns, err := strconv.Atoi(s)
 	if err != nil || maxConns <= 0 {
-		return nil, fmt.Errorf("DB_MAX_CONNS: invalid value %q, want a positive count", s)
+		return nil, fmt.Errorf("%s: invalid value %q, want a positive count", key, s)
 	}
 
 	return &Config{
-		Base:         base,
-		KafkaGroupID: envconfig.OrDefault("KAFKA_GROUP_ID", "analytics-processor"),
-		WindowSize:   ws,
-		DSN:          dsn,
-		DBMaxConns:   maxConns,
+		Base:          base,
+		KafkaGroupID:  envconfig.OrDefault("KAFKA_GROUP_ID", "analytics-processor"),
+		WindowSize:    windowSize,
+		FlushInterval: flushInterval,
+		DSN:           dsn,
+		DBMaxConns:    maxConns,
 	}, nil
 }

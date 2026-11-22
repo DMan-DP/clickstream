@@ -15,6 +15,7 @@ import (
 	"github.com/DMan-DP/clickstream/internal/analytics/config"
 	"github.com/DMan-DP/clickstream/internal/analytics/consumer"
 	"github.com/DMan-DP/clickstream/internal/analytics/repository"
+	"github.com/DMan-DP/clickstream/internal/analytics/service"
 	"github.com/IBM/sarama"
 )
 
@@ -39,7 +40,9 @@ func run(logger *slog.Logger, cfg *config.Config) (err error) {
 	if err != nil {
 		return err
 	}
-	handler := consumer.NewHandler(logger.With("component", "consumer"))
+
+	stats := service.NewStats(cfg.WindowSize, db)
+	handler := consumer.NewHandler(logger.With("component", "consumer"), stats, cfg.FlushInterval)
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
