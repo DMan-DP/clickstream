@@ -11,9 +11,10 @@ import (
 type statsStore interface {
 	// Save adds the counts of snapshot to the stored counts in one
 	// transaction. A nil error means all rows are committed. A non-nil
-	// error means nothing is written, so the caller may retry with the
-	// same snapshot. Saving the same snapshot twice after success counts
-	// it twice.
+	// error means the transaction is rolled back, so the caller may retry
+	// with the same snapshot. The only exception is a lost reply to
+	// COMMIT: the rows may be stored anyway, and a retry counts them
+	// twice. Saving the same snapshot twice after success counts it twice.
 	Save(ctx context.Context, snapshot domain.Snapshot) error
 }
 
