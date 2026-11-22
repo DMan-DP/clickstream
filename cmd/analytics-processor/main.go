@@ -10,15 +10,30 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/DMan-DP/clickstream/internal/analytics/config"
 	"github.com/DMan-DP/clickstream/internal/analytics/consumer"
+	"github.com/DMan-DP/clickstream/internal/analytics/repository"
 	"github.com/IBM/sarama"
 )
 
-func run(logger *slog.Logger, cfg *config.Config) error {
+const dbConnTimeout = 10 * time.Second
+
+func run(logger *slog.Logger, cfg *config.Config) (err error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	dbCtx, cancel := context.WithTimeout(ctx, dbConnTimeout)
+	db, err := repository.NewPostgres(dbCtx, cfg.DSN, cfg.DBMaxConns)
+	cancel()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = errors.Join(err, db.Close())
+	}()
+	logger.Info("db connected", "max_conns", cfg.DBMaxConns)
 
 	group, err := consumer.NewConsumerGroup(cfg.KafkaBrokers, cfg.KafkaGroupID)
 	if err != nil {

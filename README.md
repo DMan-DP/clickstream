@@ -89,7 +89,7 @@ You need Docker and Go.
    docker compose up -d
    ```
 
-   Compose creates the `user-events` topic with 3 partitions and applies the migrations. The Kafka UI is at http://localhost:8090, PostgreSQL listens on port 5432.
+   Compose creates the `user-events` topic with 3 partitions and applies the migrations. The Kafka UI is at http://localhost:8090, PostgreSQL listens on port 5433 (POSTGRES_PORT).
 
    The demo page is at http://localhost:3000. It is served by nginx, which also proxies `POST /events` to `tracker-api` on the host (`TRACKER_API_URL` in `.env`), so the page and the API share one origin and no CORS is needed. Changes in `frontend/` show up after a page reload, no restart is needed.
 
