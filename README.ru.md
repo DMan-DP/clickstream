@@ -32,6 +32,7 @@ internal/
   tracker/                код tracker-api: config, handler, service, publisher
   analytics/              код analytics-processor: domain, service, repository, consumer
 migrations/               схема PostgreSQL
+queries/                  SQL-запросы к сохраненным счетчикам
 frontend/                 демо-страница и трекер
 nginx/                    конфиг nginx: раздает frontend/, проксирует /events в tracker-api
 docker-compose.yml        Kafka, kafka-ui, PostgreSQL, создание топика, миграции, nginx
@@ -89,7 +90,7 @@ At-least-once на всем пути: событие не теряется, но
    docker compose up -d
    ```
 
-   Compose создаст топик `user-events` с 3 партициями и применит миграции. Интерфейс Kafka откроется на http://localhost:8090, PostgreSQL слушает порт 5432.
+   Compose создаст топик `user-events` с 3 партициями и применит миграции. Интерфейс Kafka откроется на http://localhost:8090, PostgreSQL слушает порт 5433 (POSTGRES_PORT).
 
    Демо-страница откроется на http://localhost:3000. Ее раздает nginx, он же проксирует `POST /events` в `tracker-api` на хосте (`TRACKER_API_URL` в `.env`), поэтому у страницы и API один origin и CORS не нужен. Правки в `frontend/` видны после перезагрузки страницы, перезапуск не нужен.
 
@@ -119,6 +120,30 @@ At-least-once на всем пути: событие не теряется, но
 go test ./...
 ```
 
+## Запросы
+
+[queries/stats.sql](queries/stats.sql) читает счетчики, которые записал `analytics-processor`: события по окнам и типам, то же с разбивкой по элементам, итоги за период и топ вариантов выбора (пицца, размер, топпинги, количество).
+
+Bash:
+
+```
+docker compose exec -T postgres psql -U clickstream -d clickstream < queries/stats.sql
+```
+
+PowerShell:
+
+```
+Get-Content queries/stats.sql | docker compose exec -T postgres psql -U clickstream -d clickstream
+```
+
+Необязательные переменные psql: `window_sec` (длина окна в секундах, должна совпадать с `WINDOW_SIZE`, по умолчанию `30`), `period` (на сколько назад от текущего момента, по умолчанию `1 day`), `top` (сколько значений показать в каждой группе, по умолчанию `3`):
+
+```
+docker compose exec -T postgres psql -U clickstream -d clickstream -v "period=1 hour" -v top=1 < queries/stats.sql
+```
+
+Счетчики складываются, одно окно может лежать в базе частями, поэтому запросы суммируют `count`. Значения по умолчанию (маргарита, средний размер, количество 1) событий не дают, поэтому топ показывает, как часто значение выбирали, а не что заказали.
+
 ## Состояние
 
 Проект в разработке.
@@ -126,7 +151,7 @@ go test ./...
 - [x] Инфраструктура в Docker Compose: Kafka, kafka-ui, PostgreSQL, топик, миграции
 - [x] Демо-страница и трекер событий, раздает nginx с проксированием `/events` в `tracker-api`
 - [x] Каркас `tracker-api`: конфигурация, health check, корректная остановка
-- [ ] Прием событий `POST /events`
-- [ ] Публикация в Kafka
-- [ ] `analytics-processor`: чтение из Kafka, агрегация по окнам, запись в PostgreSQL
+- [x] Прием событий `POST /events`
+- [x] Публикация в Kafka
+- [x] `analytics-processor`: чтение из Kafka, агрегация по окнам, запись в PostgreSQL
 - [ ] Docker-образы сервисов

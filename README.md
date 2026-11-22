@@ -32,6 +32,7 @@ internal/
   tracker/                tracker-api code: config, handler, service, publisher
   analytics/              analytics-processor code: domain, service, repository, consumer
 migrations/               PostgreSQL schema
+queries/                  SQL queries over the stored counters
 frontend/                 demo page and tracker
 nginx/                    nginx config: serves frontend/, proxies /events to tracker-api
 docker-compose.yml        Kafka, kafka-ui, PostgreSQL, topic creation, migrations, nginx
@@ -119,6 +120,30 @@ Tests:
 go test ./...
 ```
 
+## Queries
+
+[queries/stats.sql](queries/stats.sql) reads the counters written by `analytics-processor`: events per window and type, the same split by element, totals for the period and the top choices (pizza, size, toppings, quantity).
+
+Bash:
+
+```
+docker compose exec -T postgres psql -U clickstream -d clickstream < queries/stats.sql
+```
+
+PowerShell:
+
+```
+Get-Content queries/stats.sql | docker compose exec -T postgres psql -U clickstream -d clickstream
+```
+
+Optional psql variables: `window_sec` (window length in seconds, must match `WINDOW_SIZE`, default `30`), `period` (how far back from now, default `1 day`), `top` (values per choice group, default `3`):
+
+```
+docker compose exec -T postgres psql -U clickstream -d clickstream -v "period=1 hour" -v top=1 < queries/stats.sql
+```
+
+Counters are additive and one window may be stored in several parts, so the queries sum `count`. Default choices (margherita, medium, quantity 1) produce no events, so the top shows how often a value was picked, not what was ordered.
+
 ## Status
 
 Work in progress.
@@ -126,7 +151,7 @@ Work in progress.
 - [x] Infrastructure in Docker Compose: Kafka, kafka-ui, PostgreSQL, topic, migrations
 - [x] Demo page and event tracker, served by nginx with `/events` proxied to `tracker-api`
 - [x] `tracker-api` skeleton: configuration, health check, graceful shutdown
-- [ ] Receiving events with `POST /events`
-- [ ] Publishing to Kafka
-- [ ] `analytics-processor`: reading from Kafka, window aggregation, writing to PostgreSQL
+- [x] Receiving events with `POST /events`
+- [x] Publishing to Kafka
+- [x] `analytics-processor`: reading from Kafka, window aggregation, writing to PostgreSQL
 - [ ] Docker images for the services
