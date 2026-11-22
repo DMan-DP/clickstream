@@ -132,9 +132,10 @@ services:
       retries: 3
       start_period: 5s
     # docker stop waits 10 s by default before SIGKILL. Stopping takes
-    # Shutdown (up to 10 s) plus Close waiting for the background sends
-    # (up to about 8 s under load with Kafka down).
-    stop_grace_period: 20s
+    # Shutdown plus Close waiting for the background sends. Measured with
+    # Kafka down and all send slots busy: up to 24 s in total, Close alone
+    # up to 19 s (sarama queues the retries of concurrent sends). Idle: 1 s.
+    stop_grace_period: 30s
 
   # Aggregation: reads events from Kafka as a consumer group member, writes
   # window counts to PostgreSQL. No HTTP, so no healthcheck.
