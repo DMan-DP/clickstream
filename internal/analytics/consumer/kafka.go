@@ -15,12 +15,21 @@ import (
 	"github.com/IBM/sarama"
 )
 
-// finalFlushTimeout limits the last save of a partition when its ConsumeClaim
-// returns. The session context is already cancelled then, so the save
-// needs its own deadline: well below the rebalance timeout (60 s), during
-// which the other members wait, and below the 10 s that docker stop gives
-// before it kills the process.
-const finalFlushTimeout = 5 * time.Second
+// FlushTimeout limits one save of the counts of a partition: on every flush
+// tick and the last one when ConsumeClaim returns. The last save runs after
+// the session context is cancelled, so it needs its own deadline: well below
+// the rebalance timeout (60 s), during which the other members wait, and
+// below the 10 s that docker stop gives before it kills the process. The
+// liveness threshold in main is derived from it.
+const FlushTimeout = 5 * time.Second
+
+// PartitionTracker records that the loop of a partition is alive. The
+// liveness probe reads these records and fails when a partition has been
+// silent for too long.
+type PartitionTracker interface {
+	Record(partition int32, now time.Time)
+	Remove(partition int32)
+}
 
 // Handler processes the messages of the partitions assigned to this group
 // member. Sarama calls ConsumeClaim in a separate goroutine for each
@@ -29,6 +38,7 @@ type Handler struct {
 	logger        *slog.Logger
 	stats         *service.Stats
 	flushInterval time.Duration
+	tracker       PartitionTracker
 }
 
 // The compiler checks that Handler implements the sarama interface.
@@ -61,12 +71,14 @@ func NewConsumerGroup(brokers []string, groupID string) (sarama.ConsumerGroup, e
 
 // NewHandler creates a Handler that writes its logs to logger, counts the
 // events of each partition with stats and saves the counts every
-// flushInterval. flushInterval must be positive.
-func NewHandler(logger *slog.Logger, stats *service.Stats, flushInterval time.Duration) *Handler {
+// flushInterval. On every flush tick it reports the partition to tracker,
+// which must not be nil. flushInterval must be positive.
+func NewHandler(logger *slog.Logger, stats *service.Stats, flushInterval time.Duration, tracker PartitionTracker) *Handler {
 	return &Handler{
 		logger:        logger,
 		stats:         stats,
 		flushInterval: flushInterval,
+		tracker:       tracker,
 	}
 }
 
@@ -95,6 +107,8 @@ func (h *Handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.Co
 	ticker := time.NewTicker(h.flushInterval)
 	defer ticker.Stop()
 
+	h.tracker.Record(claim.Partition(), time.Now())
+
 	var lastMsg *sarama.ConsumerMessage
 
 	flush := func(ctx context.Context) {
@@ -111,7 +125,8 @@ func (h *Handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.Co
 	}
 
 	defer func() {
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(sess.Context()), finalFlushTimeout)
+		h.tracker.Remove(claim.Partition())
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(sess.Context()), FlushTimeout)
 		defer cancel()
 		flush(ctx)
 	}()
@@ -133,7 +148,10 @@ func (h *Handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.Co
 			pStats.Add(toDomainEvent(event))
 			h.logger.DebugContext(sess.Context(), "event received", "partition", msg.Partition, "offset", msg.Offset, "event", event)
 		case <-ticker.C:
-			flush(sess.Context())
+			h.tracker.Record(claim.Partition(), time.Now())
+			ctx, cancel := context.WithTimeout(sess.Context(), FlushTimeout)
+			flush(ctx)
+			cancel()
 		case <-sess.Context().Done():
 			return nil
 		}

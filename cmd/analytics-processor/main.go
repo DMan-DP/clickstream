@@ -14,12 +14,19 @@ import (
 
 	"github.com/DMan-DP/clickstream/internal/analytics/config"
 	"github.com/DMan-DP/clickstream/internal/analytics/consumer"
+	"github.com/DMan-DP/clickstream/internal/analytics/heartbeat"
 	"github.com/DMan-DP/clickstream/internal/analytics/repository"
 	"github.com/DMan-DP/clickstream/internal/analytics/service"
 	"github.com/IBM/sarama"
 )
 
 const dbConnTimeout = 10 * time.Second
+
+// heartbeatFactor sets the liveness threshold as a multiple of the longest
+// normal gap between two heartbeats of a partition: the flush interval plus
+// the flush timeout. With 3 a partition has to miss about three ticks in a
+// row before the probe fails, so one slow flush does not restart the pod.
+const heartbeatFactor = 3
 
 func run(logger *slog.Logger, cfg *config.Config) (err error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -41,8 +48,10 @@ func run(logger *slog.Logger, cfg *config.Config) (err error) {
 		return err
 	}
 
+	threshold := heartbeatFactor * (cfg.FlushInterval + consumer.FlushTimeout)
+	tracker := heartbeat.NewTracker(threshold)
 	stats := service.NewStats(cfg.WindowSize, cfg.SessionTimeout, db)
-	handler := consumer.NewHandler(logger.With("component", "consumer"), stats, cfg.FlushInterval)
+	handler := consumer.NewHandler(logger.With("component", "consumer"), stats, cfg.FlushInterval, tracker)
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
@@ -53,7 +62,7 @@ func run(logger *slog.Logger, cfg *config.Config) (err error) {
 
 	var consumeErr error
 
-	logger.Info("consumer starting", "group_id", cfg.KafkaGroupID, "topic", cfg.KafkaTopic)
+	logger.Info("consumer starting", "group_id", cfg.KafkaGroupID, "topic", cfg.KafkaTopic, "liveness_threshold_sec", threshold.Seconds())
 	for {
 		if ctx.Err() != nil {
 			break
