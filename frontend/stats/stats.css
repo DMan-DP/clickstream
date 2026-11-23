@@ -309,6 +309,18 @@ th {
   font-variant-numeric: tabular-nums;
 }
 
+td.zero {
+  color: var(--text-muted);
+}
+
+.total {
+  font-weight: 600;
+}
+
+th {
+  white-space: nowrap;
+}
+
 .tooltip {
   position: fixed;
   z-index: 10;

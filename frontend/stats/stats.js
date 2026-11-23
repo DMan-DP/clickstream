@@ -378,24 +378,49 @@
     }
   }
 
+  // Pivot table: one row per element, one column per event type seen in
+  // the period, plus the row total. Rows by total descending.
   function renderTotals(totals) {
-    const body = $('totals').tBodies[0];
+    const table = $('totals');
+    const head = table.tHead.rows[0];
+    const body = table.tBodies[0];
+    head.replaceChildren();
     body.replaceChildren();
+
+    const seen = new Set(totals.map((t) => t.event_type));
+    const types = TYPE_ORDER.filter((t) => seen.has(t)).concat(
+      [...seen].filter((t) => !TYPE_ORDER.includes(t)).sort());
+
+    head.append(el('th', '', 'Элемент'));
+    for (const t of types) head.append(el('th', 'num', TYPE_NAMES[t] || t));
+    head.append(el('th', 'num total', 'Всего'));
+
     if (totals.length === 0) {
       const tr = el('tr');
       const td = el('td', 'empty', 'За период событий нет.');
-      td.colSpan = 3;
+      td.colSpan = types.length + 2;
       tr.append(td);
       body.append(tr);
       return;
     }
+
+    const rows = new Map();
     for (const t of totals) {
+      if (!rows.has(t.element_id)) rows.set(t.element_id, { id: t.element_id, total: 0, byType: {} });
+      const row = rows.get(t.element_id);
+      row.byType[t.event_type] = (row.byType[t.event_type] || 0) + t.events;
+      row.total += t.events;
+    }
+    const sorted = [...rows.values()].sort((a, b) => b.total - a.total || a.id.localeCompare(b.id));
+
+    for (const row of sorted) {
       const tr = el('tr');
-      tr.append(
-        el('td', '', TYPE_NAMES[t.event_type] || t.event_type),
-        el('td', '', t.element_id),
-        el('td', 'num', nf.format(t.events)),
-      );
+      tr.append(el('td', '', row.id));
+      for (const t of types) {
+        const v = row.byType[t];
+        tr.append(el('td', v ? 'num' : 'num zero', v ? nf.format(v) : '-'));
+      }
+      tr.append(el('td', 'num total', nf.format(row.total)));
       body.append(tr);
     }
   }
