@@ -61,8 +61,10 @@ func run(logger *slog.Logger, cfg *config.Config) error {
 		Readyz: handler.NewReadiness(&shuttingDown),
 	}
 
+	timeoutHandler := handler.WithTimeout(handler.NewRouter(routes), 5*time.Second)
+	accessLogHandler := handler.WithAccessLog(timeoutHandler, logger.With("component", "http"))
 	server := &http.Server{
-		Handler:           handler.WithTimeout(handler.NewRouter(routes), 5*time.Second),
+		Handler:           accessLogHandler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
