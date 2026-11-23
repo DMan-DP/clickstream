@@ -1,0 +1,6 @@
+# Build context of deploy/frontend/Dockerfile (repository root). Used by
+# BuildKit instead of the root .dockerignore: only the page and the nginx
+# template reach the image.
+*
+!frontend/
+!nginx/default.conf.template

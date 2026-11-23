@@ -35,6 +35,7 @@ resources:
   - kafka.yaml
   - tracker-api.yaml
   - analytics-processor.yaml
+  - frontend.yaml
 
 # The Secret name gets a hash of its content (postgres-7f9c...), and the
 # references in the manifests are rewritten to it. A new password means a

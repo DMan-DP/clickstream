@@ -194,8 +194,14 @@ services:
 
   # Demo page and reverse proxy: /events goes to tracker-api, so the page
   # and the API share one origin. Page: http://localhost:3000
+  # The image with the files baked in is for Kubernetes
+  # (deploy/frontend/Dockerfile). Here the files are mounted on top of
+  # them, so edits of the page show up without a rebuild.
   frontend:
-    image: nginx:1.28.0-alpine
+    build:
+      context: .
+      dockerfile: deploy/frontend/Dockerfile
+    image: clickstream/frontend:dev
     container_name: clickstream-frontend
     # nginx resolves the upstream name once at start and exits if it is
     # unknown, so tracker-api must be running first
