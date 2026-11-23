@@ -65,13 +65,24 @@
 
     <section class="panel">
       <h2>События по элементам</h2>
-      <p class="muted small">Сколько событий каждого типа было на элементе за период, по убыванию итога.</p>
+      <p class="muted small">Сколько событий было на элементе за период. Клик по заголовку меняет сортировку.</p>
+      <div class="filters table-filters">
+        <label>Тип события
+          <select id="totals-type">
+            <option value="">Все типы</option>
+          </select>
+        </label>
+        <label>Элемент
+          <input id="totals-search" type="search" placeholder="например, size">
+        </label>
+      </div>
       <div class="table-wrap">
         <table id="totals">
           <thead><tr></tr></thead>
           <tbody></tbody>
         </table>
       </div>
+      <button id="totals-more" class="more" type="button" hidden></button>
     </section>
   </main>
 

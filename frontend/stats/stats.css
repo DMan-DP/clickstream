@@ -111,6 +111,7 @@ h2 {
 
 .filters select,
 .filters input[type="number"],
+.filters input[type="search"],
 .filters button {
   font: inherit;
   color: var(--text-primary);
@@ -122,6 +123,20 @@ h2 {
 
 .filters input[type="number"] {
   width: 140px;
+}
+
+.table-filters {
+  margin: 0 0 12px;
+}
+
+.more {
+  margin-top: 10px;
+  font: inherit;
+  color: var(--series-1);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
 }
 
 .filters button {
@@ -279,13 +294,16 @@ h2 {
 
 /* Table view */
 .table-wrap {
-  max-height: 420px;
+  max-height: 520px;
   overflow: auto;
 }
 
 table {
   width: 100%;
-  border-collapse: collapse;
+  /* separate, not collapse: with collapsed borders a sticky header lets
+     the scrolled rows show through its border line */
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 0.9rem;
 }
 
@@ -299,6 +317,7 @@ td {
 th {
   position: sticky;
   top: 0;
+  z-index: 1;
   background: var(--surface-1);
   color: var(--text-secondary);
   font-weight: 500;
@@ -309,16 +328,45 @@ th {
   font-variant-numeric: tabular-nums;
 }
 
-td.zero {
-  color: var(--text-muted);
-}
-
 .total {
   font-weight: 600;
 }
 
 th {
   white-space: nowrap;
+}
+
+/* Sortable headers: the whole cell is a button, the arrow of the current
+   column comes from aria-sort, so it always matches the state */
+th .sort {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: inherit;
+}
+
+th .sort:hover,
+th[aria-sort="ascending"] .sort,
+th[aria-sort="descending"] .sort {
+  color: var(--text-primary);
+}
+
+th .sort::after {
+  display: inline-block;
+  width: 1em;
+  content: "";
+  font-size: 0.75em;
+}
+
+th[aria-sort="descending"] .sort::after {
+  content: "\25BC";
+}
+
+th[aria-sort="ascending"] .sort::after {
+  content: "\25B2";
 }
 
 .tooltip {

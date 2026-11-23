@@ -234,11 +234,13 @@
     return parts.join(' ');
   }
 
-  function niceMax(v) {
-    if (v <= 0) return 1;
-    const pow = Math.pow(10, Math.floor(Math.log10(v)));
-    for (const m of [1, 2, 2.5, 5, 10]) {
-      if (m * pow >= v) return m * pow;
+  // Integer tick step from 1, 2, 5 x 10^n that gives at most 5 steps up
+  // to v: counts are whole, so the axis never shows 12,5.
+  function niceStep(v) {
+    const raw = Math.max(1, v / 5);
+    const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+    for (const m of [1, 2, 5, 10]) {
+      if (m * pow >= raw) return m * pow;
     }
     return 10 * pow;
   }
@@ -261,15 +263,15 @@
     const m = { top: 10, right: 8, bottom: 24, left: 44 };
     const iw = W - m.left - m.right;
     const ih = H - m.top - m.bottom;
-    const yMax = niceMax(Math.max(...list.map((b) => b.total)));
+    const yStep = niceStep(Math.max(...list.map((b) => b.total)));
+    const yMax = Math.max(yStep, Math.ceil(Math.max(...list.map((b) => b.total)) / yStep) * yStep);
     const step = iw / list.length;
     const gap = Math.min(2, step * 0.2);
     const y = (v) => m.top + ih - (v / yMax) * ih;
 
     const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': 'Количество событий во времени' });
 
-    for (let i = 0; i <= 4; i++) {
-      const v = (yMax / 4) * i;
+    for (let v = 0; v <= yMax; v += yStep) {
       svg.append(svgEl('line', { class: 'grid-line', x1: m.left, x2: W - m.right, y1: y(v), y2: y(v) }));
       const t = svgEl('text', { class: 'axis-text', x: m.left - 6, y: y(v) + 4, 'text-anchor': 'end' });
       t.textContent = nf.format(v);
@@ -380,50 +382,147 @@
 
   // Pivot table: one row per element, one column per event type seen in
   // the period, plus the row total. Rows by total descending.
+  // State of the element table, kept between refreshes: sort column
+  // ('element', 'total' or an event type) and direction, the event type
+  // filter ('' for all types, then the table is a pivot), the element
+  // search and whether all rows are shown.
+  const TABLE_ROWS = 10;
+  const table = { key: 'total', desc: true, type: '', query: '', expanded: false };
+  let lastTotals = [];
+
+  function sortValue(row, key) {
+    if (key === 'element') return row.id;
+    if (key === 'total') return row.total;
+    return row.byType[key] || 0;
+  }
+
+  // A click on the current column flips the direction; another column
+  // starts descending for numbers and A to Z for element names.
+  function setSort(key) {
+    if (table.key === key) {
+      table.desc = !table.desc;
+    } else {
+      table.key = key;
+      table.desc = key !== 'element';
+    }
+    renderTotals(lastTotals);
+  }
+
+  function headerCell(key, label, className) {
+    const th = el('th', className);
+    const active = table.key === key;
+    th.setAttribute('aria-sort', active ? (table.desc ? 'descending' : 'ascending') : 'none');
+    const button = el('button', 'sort', label);
+    button.type = 'button';
+    button.addEventListener('click', () => setSort(key));
+    th.append(button);
+    return th;
+  }
+
+  // Options of the type filter: the types seen in the period. A selected
+  // type that is gone after a refresh stays in the list, so the choice of
+  // the user is not reset under them.
+  function fillTypeSelect(types) {
+    const select = $('totals-type');
+    const keep = table.type && !types.includes(table.type) ? [table.type] : [];
+    const all = el('option', '', 'Все типы');
+    all.value = '';
+    select.replaceChildren(all);
+    for (const t of types.concat(keep)) {
+      const option = el('option', '', TYPE_NAMES[t] || t);
+      option.value = t;
+      select.append(option);
+    }
+    select.value = table.type;
+  }
+
+  // Element table. All types: a pivot, one column per event type seen in
+  // the period plus the total. One type: element and its count only.
+  // Rows are filtered by the search, sorted by the table state (ties by
+  // element) and cut to TABLE_ROWS unless expanded.
   function renderTotals(totals) {
-    const table = $('totals');
-    const head = table.tHead.rows[0];
-    const body = table.tBodies[0];
+    lastTotals = totals;
+    const head = $('totals').tHead.rows[0];
+    const body = $('totals').tBodies[0];
     head.replaceChildren();
     body.replaceChildren();
 
     const seen = new Set(totals.map((t) => t.event_type));
-    const types = TYPE_ORDER.filter((t) => seen.has(t)).concat(
+    const allTypes = TYPE_ORDER.filter((t) => seen.has(t)).concat(
       [...seen].filter((t) => !TYPE_ORDER.includes(t)).sort());
+    fillTypeSelect(allTypes);
 
-    head.append(el('th', '', 'Элемент'));
-    for (const t of types) head.append(el('th', 'num', TYPE_NAMES[t] || t));
-    head.append(el('th', 'num total', 'Всего'));
-
-    if (totals.length === 0) {
-      const tr = el('tr');
-      const td = el('td', 'empty', 'За период событий нет.');
-      td.colSpan = types.length + 2;
-      tr.append(td);
-      body.append(tr);
-      return;
+    const types = table.type ? [] : allTypes;
+    const validKeys = ['element', 'total'].concat(types);
+    if (!validKeys.includes(table.key)) {
+      table.key = 'total';
+      table.desc = true;
     }
 
+    head.append(headerCell('element', 'Элемент', ''));
+    for (const t of types) head.append(headerCell(t, TYPE_NAMES[t] || t, 'num'));
+    head.append(headerCell('total', table.type ? 'Событий' : 'Всего', 'num total'));
+
+    const query = table.query.trim().toLowerCase();
     const rows = new Map();
     for (const t of totals) {
+      if (table.type && t.event_type !== table.type) continue;
+      if (query && !t.element_id.toLowerCase().includes(query)) continue;
       if (!rows.has(t.element_id)) rows.set(t.element_id, { id: t.element_id, total: 0, byType: {} });
       const row = rows.get(t.element_id);
       row.byType[t.event_type] = (row.byType[t.event_type] || 0) + t.events;
       row.total += t.events;
     }
-    const sorted = [...rows.values()].sort((a, b) => b.total - a.total || a.id.localeCompare(b.id));
 
-    for (const row of sorted) {
+    const more = $('totals-more');
+    if (rows.size === 0) {
+      const tr = el('tr');
+      const td = el('td', 'empty', totals.length === 0 ? 'За период событий нет.' : 'Ничего не найдено.');
+      td.colSpan = types.length + 2;
+      tr.append(td);
+      body.append(tr);
+      more.hidden = true;
+      return;
+    }
+
+    const { key, desc } = table;
+    const sorted = [...rows.values()].sort((a, b) => {
+      const va = sortValue(a, key);
+      const vb = sortValue(b, key);
+      const cmp = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+      return (desc ? -cmp : cmp) || a.id.localeCompare(b.id);
+    });
+    const shown = table.expanded ? sorted : sorted.slice(0, TABLE_ROWS);
+
+    for (const row of shown) {
       const tr = el('tr');
       tr.append(el('td', '', row.id));
       for (const t of types) {
         const v = row.byType[t];
-        tr.append(el('td', v ? 'num' : 'num zero', v ? nf.format(v) : '-'));
+        // Empty cell, not a dash: most elements have only a few event
+        // types, and a column of dashes hides the numbers
+        tr.append(el('td', 'num', v ? nf.format(v) : ''));
       }
       tr.append(el('td', 'num total', nf.format(row.total)));
       body.append(tr);
     }
+
+    more.hidden = sorted.length <= TABLE_ROWS;
+    more.textContent = table.expanded ? 'Свернуть' : 'Показать все (' + sorted.length + ')';
   }
+
+  $('totals-type').addEventListener('change', (e) => {
+    table.type = e.target.value;
+    renderTotals(lastTotals);
+  });
+  $('totals-search').addEventListener('input', (e) => {
+    table.query = e.target.value;
+    renderTotals(lastTotals);
+  });
+  $('totals-more').addEventListener('click', () => {
+    table.expanded = !table.expanded;
+    renderTotals(lastTotals);
+  });
 
   // --- wiring ---
 
