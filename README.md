@@ -146,7 +146,7 @@ go test ./...
 
 ## Queries
 
-[queries/stats.sql](queries/stats.sql) reads the counters written by `analytics-processor`: events per window and type, the same split by element, totals for the period and the top choices (pizza, size, toppings, quantity).
+[queries/stats.sql](queries/stats.sql) reads the counters written by `analytics-processor`: events per window and type, the same split by element, totals for the period, the top choices (pizza, size, toppings, quantity) and the order funnel conversion.
 
 Bash:
 

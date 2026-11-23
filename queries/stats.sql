@@ -91,3 +91,31 @@ SELECT choice, place, value, picks, share_pct
 FROM ranked
 WHERE place <= :top
 ORDER BY choice, place, value;
+
+-- A session is counted on a step in the window of the event that took it
+-- there, so a session spread over two windows has visit in one and the
+-- rest in the other. One window alone is not a funnel: read the period.
+-- Steps come from a fixed list, so a step nobody reached shows 0.
+\echo '5. Order funnel for the period'
+WITH steps (step, pos) AS (
+    VALUES ('visit', 1), ('pizza', 2), ('contacts', 3), ('submit', 4)
+),
+totals AS (
+    SELECT s.step,
+           s.pos,
+           coalesce(sum(f.sessions), 0) AS sessions
+    FROM steps s
+    LEFT JOIN funnel_stats f
+           ON f.step = s.step
+          AND f.window_sec = :window_sec
+          AND f.window_start >= now() - :'period'::interval
+    GROUP BY s.step, s.pos
+)
+SELECT step,
+       sessions,
+       lag(sessions) OVER w - sessions AS dropped,
+       round(100.0 * sessions / nullif(lag(sessions) OVER w, 0), 1) AS from_prev_pct,
+       round(100.0 * sessions / nullif(first_value(sessions) OVER w, 0), 1) AS from_visit_pct
+FROM totals
+WINDOW w AS (ORDER BY pos)
+ORDER BY pos;
