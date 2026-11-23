@@ -5,7 +5,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -14,13 +16,17 @@ import (
 
 	"github.com/DMan-DP/clickstream/internal/analytics/config"
 	"github.com/DMan-DP/clickstream/internal/analytics/consumer"
+	"github.com/DMan-DP/clickstream/internal/analytics/handler"
 	"github.com/DMan-DP/clickstream/internal/analytics/heartbeat"
 	"github.com/DMan-DP/clickstream/internal/analytics/repository"
 	"github.com/DMan-DP/clickstream/internal/analytics/service"
 	"github.com/IBM/sarama"
 )
 
-const dbConnTimeout = 10 * time.Second
+const (
+	dbConnTimeout         = 10 * time.Second
+	serverShutdownTimeout = 10 * time.Second
+)
 
 // heartbeatFactor sets the liveness threshold as a multiple of the longest
 // normal gap between two heartbeats of a partition: the flush interval plus
@@ -51,7 +57,36 @@ func run(logger *slog.Logger, cfg *config.Config) (err error) {
 	threshold := heartbeatFactor * (cfg.FlushInterval + consumer.FlushTimeout)
 	tracker := heartbeat.NewTracker(threshold)
 	stats := service.NewStats(cfg.WindowSize, cfg.SessionTimeout, db)
-	handler := consumer.NewHandler(logger.With("component", "consumer"), stats, cfg.FlushInterval, tracker)
+	consumerHandler := consumer.NewHandler(logger.With("component", "consumer"), stats, cfg.FlushInterval, tracker)
+
+	routes := handler.Routes{
+		Livez:  handler.NewLiveness(logger.With("component", "liveness"), tracker),
+		Readyz: handler.NewReadiness(logger.With("component", "readiness"), db),
+	}
+
+	server := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           handler.NewRouter(routes),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	// The server must answer probes while the consumer makes its final
+	// flushes, so it is shut down only after the consumer group is closed.
+	// A failure to serve (e.g. the port is busy) stops the consumer too.
+	// Buffer 1: the goroutine never blocks on send, even if run has not
+	// reached the read yet. The channel is closed when the goroutine ends.
+	serveErr := make(chan error, 1)
+	logger.Info("server starting", "addr", cfg.HTTPAddr)
+	go func() {
+		defer close(serveErr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- fmt.Errorf("server: %w", err)
+			stop()
+		}
+	}()
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
@@ -68,7 +103,7 @@ func run(logger *slog.Logger, cfg *config.Config) (err error) {
 			break
 		}
 
-		err := group.Consume(ctx, []string{cfg.KafkaTopic}, handler)
+		err := group.Consume(ctx, []string{cfg.KafkaTopic}, consumerHandler)
 		if errors.Is(err, sarama.ErrClosedConsumerGroup) ||
 			errors.Is(err, context.Canceled) {
 			break
@@ -86,11 +121,20 @@ func run(logger *slog.Logger, cfg *config.Config) (err error) {
 	err = errors.Join(consumeErr, group.Close())
 
 	wg.Wait()
+
+	logger.Info("shutting down server")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
+	defer cancel()
+
+	// Shutdown makes ListenAndServe return, so the read below does not
+	// block for long: it gets the serve error, if any, or nil once the
+	// goroutine has closed the channel.
+	err = errors.Join(err, server.Shutdown(shutdownCtx), <-serveErr)
 	if err != nil {
 		return err
 	}
 
-	logger.Info("consumer gracefully stopped")
+	logger.Info("gracefully stopped")
 	return nil
 }
 

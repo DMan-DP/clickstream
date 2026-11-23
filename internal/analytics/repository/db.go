@@ -69,6 +69,12 @@ func (r *Postgres) Close() error {
 	return r.db.Close()
 }
 
+// PingContext checks that the database is reachable within ctx. It backs
+// the readiness probe.
+func (r *Postgres) PingContext(ctx context.Context) error {
+	return r.db.PingContext(ctx)
+}
+
 // Save adds the rows of snapshot (event counters, choices and funnel
 // steps) to the stored ones in one transaction: a row with the same
 // window and key gets its count increased, a missing row is inserted.

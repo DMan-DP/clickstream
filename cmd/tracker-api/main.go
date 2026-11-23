@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -34,8 +35,12 @@ func run(logger *slog.Logger, cfg *config.Config) error {
 	eventsService := service.NewEvents(logger.With("component", "event-service"), kafka)
 	eventsHandler := handler.NewEvents(logger.With("component", "event-handler"), eventsService)
 
+	// shuttingDown is set on SIGTERM; /readyz reads it and answers 503.
+	var shuttingDown atomic.Bool
+
 	routes := handler.Routes{
 		Events: eventsHandler,
+		Readyz: handler.NewReadiness(&shuttingDown),
 	}
 
 	server := &http.Server{
@@ -64,6 +69,13 @@ func run(logger *slog.Logger, cfg *config.Config) error {
 	g.Go(func() error {
 		<-ctx.Done()
 		stop()
+
+		// The load balancer learns about the shutdown with a delay: until
+		// then it may still send requests here. /readyz answers 503, and
+		// the server keeps accepting events for ShutdownDelay.
+		shuttingDown.Store(true)
+		logger.Info("shutdown delay", "delay_sec", cfg.ShutdownDelay.Seconds())
+		time.Sleep(cfg.ShutdownDelay)
 
 		logger.Info("shutting down server")
 

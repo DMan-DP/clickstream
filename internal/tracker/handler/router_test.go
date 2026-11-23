@@ -18,27 +18,48 @@ func TestRouter(t *testing.T) {
 		wantAllow   string
 	}{
 		{
-			name:       "GET health ok",
+			name:       "GET livez ok",
 			method:     http.MethodGet,
-			path:       "/health",
+			path:       "/livez",
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "HEAD health ok",
+			name:       "HEAD livez ok",
 			method:     http.MethodHead,
-			path:       "/health",
+			path:       "/livez",
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "GET health trailing slash 404",
+			name:       "GET livez trailing slash 404",
 			method:     http.MethodGet,
-			path:       "/health/",
+			path:       "/livez/",
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name:       "POST health 405",
+			name:       "POST livez 405",
 			method:     http.MethodPost,
-			path:       "/health",
+			path:       "/livez",
+			wantStatus: http.StatusMethodNotAllowed,
+			wantAllow:  "GET, HEAD",
+		},
+		{
+			name:        "GET readyz",
+			method:      http.MethodGet,
+			path:        "/readyz",
+			wantStatus:  http.StatusNoContent,
+			wantHandler: "readyz",
+		},
+		{
+			name:        "HEAD readyz",
+			method:      http.MethodHead,
+			path:        "/readyz",
+			wantStatus:  http.StatusNoContent,
+			wantHandler: "readyz",
+		},
+		{
+			name:       "POST readyz 405",
+			method:     http.MethodPost,
+			path:       "/readyz",
 			wantStatus: http.StatusMethodNotAllowed,
 			wantAllow:  "GET, HEAD",
 		},
@@ -66,6 +87,7 @@ func TestRouter(t *testing.T) {
 
 	routes := Routes{
 		Events: createStubHandler("events"),
+		Readyz: createStubHandler("readyz"),
 	}
 	mux := NewRouter(routes)
 

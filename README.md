@@ -94,7 +94,7 @@ You need Docker. Go is needed only for the tests and for running a service on th
    Compose creates the `user-events` topic with 3 partitions, applies the migrations, then starts `tracker-api` and `analytics-processor`, and starts nginx once `tracker-api` is healthy.
 
    - Demo page: http://localhost:3000. It is served by nginx, which also proxies `POST /events` to `tracker-api`, so the page and the API share one origin and no CORS is needed. Changes in `frontend/` show up after a page reload.
-   - `tracker-api` directly: `curl http://localhost:8080/health` returns `200` (port TRACKER_API_PORT).
+   - `tracker-api` directly: `curl http://localhost:8080/livez` returns `200` (port TRACKER_API_PORT).
    - Kafka UI: http://localhost:8090.
    - PostgreSQL: port 5433 (POSTGRES_PORT), the counters reach the tables FLUSH_INTERVAL after the events, see [Queries](#queries).
 

@@ -121,12 +121,15 @@ services:
       - "${TRACKER_API_PORT:-8080}:8080"
     environment:
       HTTP_ADDR: :8080
+      # Pause between SIGTERM and the server shutdown: /readyz answers 503,
+      # events are still accepted. 0 here, 5s in Kubernetes
+      SHUTDOWN_DELAY: ${SHUTDOWN_DELAY:-0s}
       KAFKA_BROKERS: kafka:29092
       KAFKA_TOPIC: ${KAFKA_TOPIC:-user-events}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     healthcheck:
-      # Liveness only: /health does not check Kafka
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/health"]
+      # Liveness only: /livez does not check Kafka
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/livez"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -138,9 +141,13 @@ services:
     stop_grace_period: 30s
 
   # Aggregation: reads events from Kafka as a consumer group member, writes
-  # window counts to PostgreSQL. No HTTP, so no healthcheck.
-  # No container_name: it would block scaling. Several instances share the
-  # topic partitions: docker compose up -d --scale analytics-processor=3
+  # window counts to PostgreSQL. HTTP on :8081 serves only the probes:
+  # /livez (consumer loops alive) and /readyz (PostgreSQL reachable).
+  # No container_name and no host port: both would block scaling. Several
+  # instances share the topic partitions:
+  # docker compose up -d --scale analytics-processor=3
+  # Probes from the host:
+  # docker compose exec analytics-processor wget -qSO- http://localhost:8081/readyz
   analytics-processor:
     build:
       context: .
@@ -158,6 +165,7 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
+      HTTP_ADDR: :8081
       KAFKA_BROKERS: kafka:29092
       KAFKA_TOPIC: ${KAFKA_TOPIC:-user-events}
       KAFKA_GROUP_ID: ${KAFKA_GROUP_ID:-analytics-processor}
@@ -167,6 +175,13 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       DB_MAX_CONNS: ${DB_MAX_CONNS:-10}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+    healthcheck:
+      # Liveness: a stuck partition loop. Does not check Kafka or PostgreSQL
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8081/livez"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
     # SIGTERM while joining the group waits for the rebalance to end (up to
     # Rebalance.Timeout, 60 s), then the final write to PostgreSQL.
     stop_grace_period: 75s

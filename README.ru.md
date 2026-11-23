@@ -94,7 +94,7 @@ At-least-once на всем пути: событие не теряется, но
    Compose создаст топик `user-events` с 3 партициями, применит миграции, затем запустит `tracker-api` и `analytics-processor`, а после готовности `tracker-api` запустит nginx.
 
    - Демо-страница: http://localhost:3000. Ее раздает nginx, он же проксирует `POST /events` в `tracker-api`, поэтому у страницы и API один origin и CORS не нужен. Правки в `frontend/` видны после перезагрузки страницы.
-   - `tracker-api` напрямую: `curl http://localhost:8080/health` возвращает `200` (порт TRACKER_API_PORT).
+   - `tracker-api` напрямую: `curl http://localhost:8080/livez` возвращает `200` (порт TRACKER_API_PORT).
    - Интерфейс Kafka: http://localhost:8090.
    - PostgreSQL: порт 5433 (POSTGRES_PORT), счетчики появляются в таблицах через FLUSH_INTERVAL после событий, см. [Запросы](#запросы).
 

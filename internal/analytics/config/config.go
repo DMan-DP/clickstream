@@ -13,7 +13,8 @@ import (
 // Config holds the analytics-processor settings: the shared ones from
 // envconfig.Base, the consumer group id, the aggregation window size, the
 // funnel session timeout, the interval of writes to the database and the
-// PostgreSQL connection string with the pool size limit.
+// PostgreSQL connection string with the pool size limit, and the address of
+// the HTTP server with the probes.
 type Config struct {
 	envconfig.Base
 	KafkaGroupID   string
@@ -22,6 +23,7 @@ type Config struct {
 	FlushInterval  time.Duration
 	DSN            string
 	DBMaxConns     int
+	HTTPAddr       string
 }
 
 // GetConfig reads the settings from environment variables and validates them.
@@ -84,5 +86,6 @@ func GetConfig() (*Config, error) {
 		FlushInterval:  flushInterval,
 		DSN:            dsn,
 		DBMaxConns:     maxConns,
+		HTTPAddr:       envconfig.OrDefault("HTTP_ADDR", ":8081"),
 	}, nil
 }
