@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,6 +21,21 @@ import (
 )
 
 func run(logger *slog.Logger, cfg *config.Config) error {
+	// Listen before connecting to Kafka: a busy port fails the start at
+	// once, without waiting for the brokers, and Serve below never fails on
+	// a busy port, so the shutdown goroutine does not sleep ShutdownDelay
+	// for a server that never started.
+	ln, err := net.Listen("tcp", cfg.HTTPAddr)
+	if err != nil {
+		return err
+	}
+	// Closes the listener if run returns before Serve takes it over. After
+	// Serve or Shutdown it is already closed, and the second Close only
+	// returns an error, which is ignored.
+	defer func() {
+		_ = ln.Close()
+	}()
+
 	producer, err := publisher.NewProducer(cfg.KafkaBrokers)
 	if err != nil {
 		return err
@@ -44,7 +60,6 @@ func run(logger *slog.Logger, cfg *config.Config) error {
 	}
 
 	server := &http.Server{
-		Addr:              cfg.HTTPAddr,
 		Handler:           handler.WithTimeout(handler.NewRouter(routes), 5*time.Second),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -57,10 +72,10 @@ func run(logger *slog.Logger, cfg *config.Config) error {
 
 	g, ctx := errgroup.WithContext(signalCtx)
 
-	logger.Info("server starting", "addr", cfg.HTTPAddr)
+	logger.Info("server starting", "addr", ln.Addr().String())
 
 	g.Go(func() error {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := server.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
 		return nil
