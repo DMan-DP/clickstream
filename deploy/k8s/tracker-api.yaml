@@ -31,6 +31,9 @@ spec:
   # extra pod at a time, never fewer than 3 ready. On one minikube node
   # this shows the mechanics only, a node failure still stops all of them.
   replicas: 3
+  # Old ReplicaSets (0 pods) kept for kubectl rollout undo, 10 by default.
+  # Rollbacks go through git anyway, a short history is enough.
+  revisionHistoryLimit: 3
   selector:
     matchLabels:
       app.kubernetes.io/name: tracker-api
