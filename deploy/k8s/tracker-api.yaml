@@ -1,0 +1,86 @@
+# tracker-api: stateless HTTP intake, so a Deployment with several
+# replicas behind a Service. Clients in the cluster use tracker-api:8080.
+# From the host: kubectl -n clickstream port-forward svc/tracker-api 8080:8080
+---
+# ClusterIP Service: one virtual IP for all ready pods, requests are spread
+# between them. A pod leaves the Service as soon as its readiness fails.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tracker-api
+  labels:
+    app.kubernetes.io/name: tracker-api
+spec:
+  selector:
+    app.kubernetes.io/name: tracker-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tracker-api
+  labels:
+    app.kubernetes.io/name: tracker-api
+spec:
+  # Three replicas, the usual minimum in production: one pod can be
+  # updated while another fails, and two still serve. With 3 replicas the
+  # default strategy (maxSurge 25%, maxUnavailable 25%) rounds to: one
+  # extra pod at a time, never fewer than 3 ready. On one minikube node
+  # this shows the mechanics only, a node failure still stops all of them.
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tracker-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tracker-api
+    spec:
+      # Service env vars are not needed, the config comes from the ConfigMap
+      enableServiceLinks: false
+      # Stop budget: SHUTDOWN_DELAY 5 s, then Shutdown and producer Close,
+      # measured up to 24 s with Kafka down. 30 s by default is too tight.
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: tracker-api
+          image: clickstream/tracker-api:dev
+          # Loaded with minikube image load, there is no registry
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: tracker-api
+          # On deletion the pod leaves the Service at once, whatever this
+          # probe says: the EndpointSlice marks it terminating. Until
+          # kube-proxy on every node has caught up, requests may still
+          # arrive, SHUTDOWN_DELAY keeps accepting them. The 503 of /readyz
+          # after SIGTERM is for balancers outside Kubernetes. Here the
+          # probe gates the start of a new pod during a rolling update.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 3
+          # /livez only says the HTTP server answers, Kafka is not checked:
+          # a Kafka outage must not restart every tracker pod.
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 128Mi

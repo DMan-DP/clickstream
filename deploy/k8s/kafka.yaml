@@ -169,7 +169,9 @@ spec:
 # makes a rerun harmless.
 # The pod template of a Job cannot be changed after creation: to change the
 # topic or the partitions, run kubectl -n clickstream delete job kafka-topics
-# first, then apply again. The topic name must match KAFKA_TOPIC of the
+# first, then apply again. The same after the Job has failed (all
+# backoffLimit retries used): apply alone does not start it again.
+# The topic name must match KAFKA_TOPIC of the
 # services, the default in compose is user-events.
 apiVersion: batch/v1
 kind: Job

@@ -87,8 +87,14 @@ services:
 
   # One-shot job: applies new migrations from ./migrations and exits.
   # Applied versions are tracked in the goose_db_version table.
+  # The image has the migrations baked in for the Kubernetes Job (see
+  # deploy/migrate/Dockerfile). Here ./migrations is mounted on top of
+  # them, so compose always runs the current files without a rebuild.
   migrate:
-    image: ghcr.io/kukymbr/goose-docker:3.26.0
+    build:
+      context: ./migrations
+      dockerfile: ../deploy/migrate/Dockerfile
+    image: clickstream/migrate:dev
     container_name: clickstream-migrate
     depends_on:
       postgres:
@@ -109,7 +115,7 @@ services:
       context: .
       args:
         SERVICE: tracker-api
-    image: clickstream/tracker-api
+    image: clickstream/tracker-api:dev
     container_name: clickstream-tracker-api
     depends_on:
       kafka:
@@ -153,7 +159,7 @@ services:
       context: .
       args:
         SERVICE: analytics-processor
-    image: clickstream/analytics-processor
+    image: clickstream/analytics-processor:dev
     depends_on:
       kafka:
         condition: service_healthy

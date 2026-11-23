@@ -1,0 +1,80 @@
+# analytics-processor: a consumer group member, reads Kafka and writes
+# window counts to Postgres. No Service: nobody sends requests to it, the
+# HTTP port serves only the probes for the kubelet.
+#
+# There is no depends_on in Kubernetes. Without Kafka or Postgres the
+# process exits at start and the pod is restarted with a growing pause
+# (CrashLoopBackOff) until they are ready. If the tables do not exist yet
+# (migrate Job still running), a save fails, the counts stay in memory
+# and the offsets are not committed; the next flush after the migrations
+# saves them, nothing is lost.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-processor
+  labels:
+    app.kubernetes.io/name: analytics-processor
+spec:
+  # The topic has 3 partitions: one per pod. A fourth pod would get no
+  # partition and stay idle, more consumers need more partitions first.
+  # Connections: replicas x DB_MAX_CONNS = 30 of 100 in Postgres.
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: analytics-processor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: analytics-processor
+    spec:
+      enableServiceLinks: false
+      # SIGTERM while joining the group waits for the rebalance to end (up
+      # to Rebalance.Timeout, 60 s), then the final write to Postgres (up to
+      # FlushTimeout, 5 s). The same 75 s as stop_grace_period in compose.
+      terminationGracePeriodSeconds: 75
+      containers:
+        - name: analytics-processor
+          image: clickstream/analytics-processor:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8081
+          envFrom:
+            # HTTP_ADDR, KAFKA_*, WINDOW_SIZE and the rest
+            - configMapRef:
+                name: analytics-processor
+            # POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB for DATABASE_URL
+            - secretRef:
+                name: postgres
+          env:
+            # $(VAR) is filled in by the kubelet from the Secret above, as
+            # in the migrate Job
+            - name: DATABASE_URL
+              value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)?sslmode=disable
+          # /readyz pings Postgres with a 1 s timeout, the probe waits 2 s.
+          # Readiness here routes no traffic (no Service), it only tells a
+          # rolling update when the new pod is up.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # /livez fails when a partition loop has not ticked for 30 s
+          # (3 x (FLUSH_INTERVAL + FlushTimeout)); 3 failures 10 s apart
+          # add up to a minute before a restart.
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
