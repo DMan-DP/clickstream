@@ -9,7 +9,7 @@
 1. Страница `frontend/` с формой заказа пиццы: кнопки, текстовые поля, слайдер, чекбоксы, радиокнопки, выпадающий список, отправка формы.
 2. Скрипт `frontend/tracker.js` собирает события в очередь и раз в 5 секунд отправляет их пачкой на `POST /events`.
 3. Сервис `tracker-api` проверяет пачку и публикует каждое событие отдельным сообщением в топик Kafka `user-events`. Ключ сообщения `session_id`, поэтому события одной сессии попадают в одну партицию.
-4. Сервис `analytics-processor` читает топик в consumer group, считает события по окнам в 30 секунд и записывает счетчики в таблицу `event_stats`.
+4. Сервис `analytics-processor` читает топик в consumer group, считает события по окнам в 30 секунд и записывает счетчики в таблицу `event_stats`. По тем же окнам он считает сессии, дошедшие до каждого шага воронки заказа (заход на страницу, выбор пиццы, заполненные контакты, отправка заказа), и записывает их в `funnel_stats`.
 
 Окна считаются по времени приема на сервере (UTC). Времени клиента сервис не доверяет, но сохраняет его в сообщении.
 
@@ -20,6 +20,7 @@
 - PostgreSQL 17, драйвер [pgx](https://github.com/jackc/pgx) через `database/sql` и [sqlx](https://github.com/jmoiron/sqlx)
 - Миграции [goose](https://github.com/pressly/goose)
 - Docker Compose
+- Kubernetes в [minikube](https://minikube.sigs.k8s.io/), манифесты собирает kustomize (`kubectl apply -k`)
 - Фронтенд на HTML, CSS и JavaScript без фреймворков
 
 ## Структура
@@ -35,6 +36,10 @@ migrations/               схема PostgreSQL
 queries/                  SQL-запросы к сохраненным счетчикам
 frontend/                 демо-страница и трекер
 nginx/                    конфиг nginx: раздает frontend/, проксирует /events в tracker-api
+deploy/
+  frontend/               образ nginx со страницей
+  migrate/                образ, который применяет миграции
+  k8s/                    манифесты Kubernetes для minikube
 Dockerfile                образ сервиса, бинарник выбирает аргумент SERVICE
 docker-compose.yml        Kafka, kafka-ui, PostgreSQL, топик, миграции, оба сервиса, nginx
 ```
@@ -144,6 +149,93 @@ $env:KAFKA_BROKERS="localhost:9092"; $env:KAFKA_TOPIC="user-events"; go run ./cm
 go test ./...
 ```
 
+## Запуск в Kubernetes (minikube)
+
+Тот же стек в локальном кластере, namespace `clickstream`: PostgreSQL и Kafka (StatefulSet, по одной реплике), Job `kafka-topics` и `migrate`, `tracker-api` и `analytics-processor` по 3 реплики и `frontend` (nginx со страницей). kafka-ui в кластер не входит.
+
+Нужны Docker, [minikube](https://minikube.sigs.k8s.io/docs/start/) и kubectl.
+
+1. Запустить кластер:
+
+   ```
+   minikube start --driver=docker --cpus=4 --memory=4096
+   ```
+
+2. Собрать образы и скопировать их в minikube. Кластер не видит локальные образы Docker, а манифесты не тянут их из реестра (`imagePullPolicy: IfNotPresent`):
+
+   ```
+   docker compose build
+   minikube image load clickstream/tracker-api:dev
+   minikube image load clickstream/analytics-processor:dev
+   minikube image load clickstream/migrate:dev
+   minikube image load clickstream/frontend:dev
+   ```
+
+3. Скопировать настройки базы и поменять пароль (только буквы и цифры, он попадает в `DATABASE_URL` как есть). Файл не коммитится:
+
+   ```
+   cp deploy/k8s/postgres.secret.env.example deploy/k8s/postgres.secret.env
+   ```
+
+4. Применить манифесты и дождаться сервисов:
+
+   ```
+   kubectl apply -k deploy/k8s
+   kubectl -n clickstream wait --for=condition=available deployment --all --timeout=5m
+   kubectl -n clickstream get pods
+   ```
+
+   Пока Kafka не поднялась и миграции не применены, поды `analytics-processor` могут перезапускаться (`CrashLoopBackOff`), это ожидаемо.
+
+5. Открыть страницу. Сервисы не выставлены наружу кластера, поэтому нужен проброс порта (он занимает терминал, остановить Ctrl+C):
+
+   ```
+   kubectl -n clickstream port-forward svc/frontend 3000:80
+   ```
+
+   Демо-страница: http://localhost:3000. Если запущен и стек Docker Compose, порт 3000 занят: остановить его или пробросить другой порт, например `3001:80`. `tracker-api` напрямую: `kubectl -n clickstream port-forward svc/tracker-api 8080:8080`, затем `curl http://localhost:8080/livez`. Проброс идет в один под, а не через балансировку Service.
+
+Логи всех реплик сервиса:
+
+```
+kubectl -n clickstream logs -f -l app.kubernetes.io/name=analytics-processor --prefix
+```
+
+Запросы из раздела [Запросы](#запросы) выполняются через под PostgreSQL. Bash:
+
+```
+kubectl -n clickstream exec -i postgres-0 -- psql -U clickstream -d clickstream < queries/stats.sql
+```
+
+PowerShell:
+
+```
+Get-Content queries/stats.sql | kubectl -n clickstream exec -i postgres-0 -- psql -U clickstream -d clickstream
+```
+
+Настройки сервисов лежат в `deploy/k8s/tracker-api.env` и `deploy/k8s/analytics-processor.env`. После правки снова выполнить `kubectl apply -k deploy/k8s`, поды этого сервиса заменятся сами.
+
+После правки кода пересобрать образ, загрузить его в minikube и перезапустить поды (тег остается `:dev`, поэтому сам Kubernetes новый образ не заметит):
+
+```
+docker compose build tracker-api
+minikube image load clickstream/tracker-api:dev
+kubectl -n clickstream rollout restart deployment/tracker-api
+```
+
+Новые миграции: так же загрузить `clickstream/migrate:dev`, затем запустить Job заново. Завершенный Job `apply` не перезапускает, а шаблон его пода менять нельзя, поэтому сначала удалить его:
+
+```
+kubectl -n clickstream delete job migrate
+kubectl apply -k deploy/k8s
+```
+
+Остановка:
+
+- `minikube stop` останавливает весь кластер, данные сохраняются. `minikube start` поднимает его обратно.
+- `kubectl -n clickstream scale deployment,statefulset --all --replicas=0` останавливает только этот проект, данные сохраняются. Запустить обратно: `kubectl apply -k deploy/k8s`, манифесты вернут число реплик.
+- `kubectl delete -k deploy/k8s` удаляет namespace вместе с томами PostgreSQL и Kafka. В отличие от `docker compose down`, данные пропадают.
+
 ## Запросы
 
 [queries/stats.sql](queries/stats.sql) читает счетчики, которые записал `analytics-processor`: события по окнам и типам, то же с разбивкой по элементам, итоги за период, топ вариантов выбора (пицца, размер, топпинги, количество) и конверсия воронки заказа.
@@ -168,14 +260,9 @@ docker compose exec -T postgres psql -U clickstream -d clickstream -v "period=1 
 
 Счетчики складываются, одно окно может лежать в базе частями, поэтому запросы суммируют `count`. Значения по умолчанию (маргарита, средний размер, количество 1) событий не дают, поэтому топ показывает, как часто значение выбирали, а не что заказали.
 
-## Состояние
+## Ограничения
 
-Проект в разработке.
-
-- [x] Инфраструктура в Docker Compose: Kafka, kafka-ui, PostgreSQL, топик, миграции
-- [x] Демо-страница и трекер событий, раздает nginx с проксированием `/events` в `tracker-api`
-- [x] Каркас `tracker-api`: конфигурация, health check, корректная остановка
-- [x] Прием событий `POST /events`
-- [x] Публикация в Kafka
-- [x] `analytics-processor`: чтение из Kafka, агрегация по окнам, запись в PostgreSQL
-- [x] Docker-образы сервисов, весь стек поднимается одной командой
+- Дедупликации нет. У каждого события есть `event_id`, но он пока не проверяется, поэтому повторно отправленная пачка посчитается дважды.
+- Один брокер Kafka и один экземпляр PostgreSQL, и в Docker Compose, и в Kubernetes. У топика replication factor 1, поэтому потеря любого из них останавливает конвейер.
+- Окна считаются по времени приема на сервере. События, которые трекер отправил с опозданием (после сбоя сети или при следующем открытии страницы), попадают в более позднее окно.
+- У repository нет интеграционного теста на настоящем PostgreSQL.

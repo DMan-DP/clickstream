@@ -9,7 +9,7 @@ User action analytics for a web page. The page sends clicks, input and field cha
 1. The `frontend/` page is a pizza order form with buttons, text fields, a slider, checkboxes, radio buttons, a dropdown and a form submit.
 2. The `frontend/tracker.js` script queues events and sends them in batches to `POST /events` every 5 seconds.
 3. The `tracker-api` service validates a batch and publishes each event as a separate message to the Kafka topic `user-events`. The message key is `session_id`, so events of one session go to the same partition.
-4. The `analytics-processor` service reads the topic in a consumer group, counts events in 30-second windows and writes the counters to the `event_stats` table.
+4. The `analytics-processor` service reads the topic in a consumer group, counts events in 30-second windows and writes the counters to the `event_stats` table. In the same windows it counts the sessions that reached each step of the order funnel (page visit, pizza chosen, contacts filled in, order sent) and writes them to `funnel_stats`.
 
 Windows are based on the server receive time (UTC). The client time is not trusted, but it is kept in the message.
 
@@ -20,6 +20,7 @@ Windows are based on the server receive time (UTC). The client time is not trust
 - PostgreSQL 17, [pgx](https://github.com/jackc/pgx) driver through `database/sql` and [sqlx](https://github.com/jmoiron/sqlx)
 - [goose](https://github.com/pressly/goose) migrations
 - Docker Compose
+- Kubernetes in [minikube](https://minikube.sigs.k8s.io/), manifests assembled with kustomize (`kubectl apply -k`)
 - Frontend in plain HTML, CSS and JavaScript, no frameworks
 
 ## Project layout
@@ -35,6 +36,10 @@ migrations/               PostgreSQL schema
 queries/                  SQL queries over the stored counters
 frontend/                 demo page and tracker
 nginx/                    nginx config: serves frontend/, proxies /events to tracker-api
+deploy/
+  frontend/               nginx image with the page
+  migrate/                image that applies the migrations
+  k8s/                    Kubernetes manifests for minikube
 Dockerfile                service image, the SERVICE argument selects the binary
 docker-compose.yml        Kafka, kafka-ui, PostgreSQL, topic, migrations, both services, nginx
 ```
@@ -144,6 +149,93 @@ Tests:
 go test ./...
 ```
 
+## Running in Kubernetes (minikube)
+
+The same stack in a local cluster, namespace `clickstream`: PostgreSQL and Kafka (StatefulSets, one replica each), the `kafka-topics` and `migrate` Jobs, `tracker-api` and `analytics-processor` with 3 replicas each, and `frontend` (nginx with the page). kafka-ui is not deployed.
+
+You need Docker, [minikube](https://minikube.sigs.k8s.io/docs/start/) and kubectl.
+
+1. Start the cluster:
+
+   ```
+   minikube start --driver=docker --cpus=4 --memory=4096
+   ```
+
+2. Build the images and copy them into minikube. The cluster does not see the local Docker images, and the manifests do not pull them from a registry (`imagePullPolicy: IfNotPresent`):
+
+   ```
+   docker compose build
+   minikube image load clickstream/tracker-api:dev
+   minikube image load clickstream/analytics-processor:dev
+   minikube image load clickstream/migrate:dev
+   minikube image load clickstream/frontend:dev
+   ```
+
+3. Copy the database settings and change the password (letters and digits only, it goes into `DATABASE_URL` as is). The file is not committed:
+
+   ```
+   cp deploy/k8s/postgres.secret.env.example deploy/k8s/postgres.secret.env
+   ```
+
+4. Apply the manifests and wait for the services:
+
+   ```
+   kubectl apply -k deploy/k8s
+   kubectl -n clickstream wait --for=condition=available deployment --all --timeout=5m
+   kubectl -n clickstream get pods
+   ```
+
+   Until Kafka is up and the migrations are applied, the `analytics-processor` pods may restart (`CrashLoopBackOff`), this is expected.
+
+5. Open the page. The Services are not exposed outside the cluster, so forward a port (it stays in the foreground, stop it with Ctrl+C):
+
+   ```
+   kubectl -n clickstream port-forward svc/frontend 3000:80
+   ```
+
+   Demo page: http://localhost:3000. If the Docker Compose stack is running too, port 3000 is taken: stop it or forward another port, for example `3001:80`. `tracker-api` directly: `kubectl -n clickstream port-forward svc/tracker-api 8080:8080`, then `curl http://localhost:8080/livez`. A port-forward goes to one pod, not through the Service balancing.
+
+Logs of all replicas of a service:
+
+```
+kubectl -n clickstream logs -f -l app.kubernetes.io/name=analytics-processor --prefix
+```
+
+Queries from [Queries](#queries) go through the PostgreSQL pod. Bash:
+
+```
+kubectl -n clickstream exec -i postgres-0 -- psql -U clickstream -d clickstream < queries/stats.sql
+```
+
+PowerShell:
+
+```
+Get-Content queries/stats.sql | kubectl -n clickstream exec -i postgres-0 -- psql -U clickstream -d clickstream
+```
+
+The settings of the services are in `deploy/k8s/tracker-api.env` and `deploy/k8s/analytics-processor.env`. After an edit run `kubectl apply -k deploy/k8s` again, the pods of that service are replaced by themselves.
+
+After a change in the code, rebuild the image, load it into minikube and restart the pods (the tag stays `:dev`, so Kubernetes does not notice the new image by itself):
+
+```
+docker compose build tracker-api
+minikube image load clickstream/tracker-api:dev
+kubectl -n clickstream rollout restart deployment/tracker-api
+```
+
+New migrations: load `clickstream/migrate:dev` the same way, then start the Job again. A finished Job is not restarted by `apply`, and its pod template cannot be changed, so delete it first:
+
+```
+kubectl -n clickstream delete job migrate
+kubectl apply -k deploy/k8s
+```
+
+Stopping:
+
+- `minikube stop` stops the whole cluster, the data stays. `minikube start` brings it back.
+- `kubectl -n clickstream scale deployment,statefulset --all --replicas=0` stops only this project, the data stays. To start it again, run `kubectl apply -k deploy/k8s`: the manifests set the replica counts back.
+- `kubectl delete -k deploy/k8s` removes the namespace together with the PostgreSQL and Kafka volumes. Unlike `docker compose down`, the data is gone.
+
 ## Queries
 
 [queries/stats.sql](queries/stats.sql) reads the counters written by `analytics-processor`: events per window and type, the same split by element, totals for the period, the top choices (pizza, size, toppings, quantity) and the order funnel conversion.
@@ -168,14 +260,9 @@ docker compose exec -T postgres psql -U clickstream -d clickstream -v "period=1 
 
 Counters are additive and one window may be stored in several parts, so the queries sum `count`. Default choices (margherita, medium, quantity 1) produce no events, so the top shows how often a value was picked, not what was ordered.
 
-## Status
+## Limitations
 
-Work in progress.
-
-- [x] Infrastructure in Docker Compose: Kafka, kafka-ui, PostgreSQL, topic, migrations
-- [x] Demo page and event tracker, served by nginx with `/events` proxied to `tracker-api`
-- [x] `tracker-api` skeleton: configuration, health check, graceful shutdown
-- [x] Receiving events with `POST /events`
-- [x] Publishing to Kafka
-- [x] `analytics-processor`: reading from Kafka, window aggregation, writing to PostgreSQL
-- [x] Docker images for the services, the whole stack starts with one command
+- No deduplication. Every event carries an `event_id`, but it is not checked yet, so a retried batch is counted twice.
+- One Kafka broker and one PostgreSQL instance, both in Docker Compose and in Kubernetes. The topic has replication factor 1, so losing either of them stops the pipeline.
+- Windows are based on the server receive time. Events that the tracker sends late (after a network failure or the next time the page is opened) land in a later window.
+- The repository has no integration test against a real PostgreSQL.
