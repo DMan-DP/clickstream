@@ -6,10 +6,11 @@
 
 ## Как это работает
 
-1. Страница `frontend/` с формой заказа пиццы: кнопки, текстовые поля, слайдер, чекбоксы, радиокнопки, выпадающий список, отправка формы.
-2. Скрипт `frontend/tracker.js` собирает события в очередь и раз в 5 секунд отправляет их пачкой на `POST /events`.
+1. Страница `frontend/site/` с формой заказа пиццы: кнопки, текстовые поля, слайдер, чекбоксы, радиокнопки, выпадающий список, отправка формы.
+2. Скрипт `frontend/site/tracker.js` собирает события в очередь и раз в 5 секунд отправляет их пачкой на `POST /events`.
 3. Сервис `tracker-api` проверяет пачку и публикует каждое событие отдельным сообщением в топик Kafka `user-events`. Ключ сообщения `session_id`, поэтому события одной сессии попадают в одну партицию.
 4. Сервис `analytics-processor` читает топик в consumer group, считает события по окнам в 30 секунд и записывает счетчики в таблицу `event_stats`. По тем же окнам он считает сессии, дошедшие до каждого шага воронки заказа (заход на страницу, выбор пиццы, заполненные контакты, отправка заказа), и записывает их в `funnel_stats`.
+5. Страница статистики `frontend/stats/` читает `GET /stats` у `analytics-processor` и показывает воронку, события во времени, популярный выбор и итоги по элементам за выбранный период.
 
 Окна считаются по времени приема на сервере (UTC). Времени клиента сервис не доверяет, но сохраняет его в сообщении.
 
@@ -32,12 +33,15 @@ cmd/
 internal/
   tracker/                код tracker-api: config, handler, service, publisher
   analytics/              код analytics-processor: domain, service, repository, consumer
+  httpx/                  общие для обоих сервисов функции HTTP-ответов
 migrations/               схема PostgreSQL
 queries/                  SQL-запросы к сохраненным счетчикам
-frontend/                 демо-страница и трекер
-nginx/                    конфиг nginx: раздает frontend/, проксирует /events в tracker-api
+frontend/
+  site/                   демо-страница и трекер
+  stats/                  страница статистики
+nginx/                    конфиг nginx: раздает обе страницы, проксирует /events и /api/stats
 deploy/
-  frontend/               образ nginx со страницей
+  frontend/               образ nginx с обеими страницами
   migrate/                образ, который применяет миграции
   k8s/                    манифесты Kubernetes для minikube
 Dockerfile                образ сервиса, бинарник выбирает аргумент SERVICE
@@ -96,9 +100,10 @@ At-least-once на всем пути: событие не теряется, но
    docker compose up -d --build
    ```
 
-   Compose создаст топик `user-events` с 3 партициями, применит миграции, затем запустит `tracker-api` и `analytics-processor`, а после готовности `tracker-api` запустит nginx.
+   Compose создаст топик `user-events` с 3 партициями, применит миграции, затем запустит `tracker-api` и `analytics-processor`, а после готовности обоих сервисов запустит nginx.
 
    - Демо-страница: http://localhost:3000. Ее раздает nginx, он же проксирует `POST /events` в `tracker-api`, поэтому у страницы и API один origin и CORS не нужен. Правки в `frontend/` видны после перезагрузки страницы.
+   - Страница статистики: http://localhost:3000/stats/. nginx проксирует `GET /api/stats` в `GET /stats` у `analytics-processor`. Параметры: `period` (длительность в формате Go, до `168h`, по умолчанию `1h`) и `window_sec` (по умолчанию `WINDOW_SIZE`), на неверное значение ответ `400`: `curl "http://localhost:3000/api/stats?period=15m"`.
    - `tracker-api` напрямую: `curl http://localhost:8080/livez` возвращает `200` (порт TRACKER_API_PORT).
    - Интерфейс Kafka: http://localhost:8090.
    - PostgreSQL: порт 5433 (POSTGRES_PORT), счетчики появляются в таблицах через FLUSH_INTERVAL после событий, см. [Запросы](#запросы).
@@ -193,7 +198,7 @@ go test ./...
    kubectl -n clickstream port-forward svc/frontend 3000:80
    ```
 
-   Демо-страница: http://localhost:3000. Если запущен и стек Docker Compose, порт 3000 занят: остановить его или пробросить другой порт, например `3001:80`. `tracker-api` напрямую: `kubectl -n clickstream port-forward svc/tracker-api 8080:8080`, затем `curl http://localhost:8080/livez`. Проброс идет в один под, а не через балансировку Service.
+   Демо-страница: http://localhost:3000, статистика: http://localhost:3000/stats/. Если запущен и стек Docker Compose, порт 3000 занят: остановить его или пробросить другой порт, например `3001:80`. `tracker-api` напрямую: `kubectl -n clickstream port-forward svc/tracker-api 8080:8080`, затем `curl http://localhost:8080/livez`. Проброс идет в один под, а не через балансировку Service.
 
 Логи всех реплик сервиса:
 
@@ -283,3 +288,4 @@ docker compose exec -T postgres psql -U clickstream -d clickstream -v "period=1 
 - Один экземпляр PostgreSQL везде и один брокер Kafka в Docker Compose: потеря любого из них останавливает конвейер. В Kubernetes у Kafka три брокера, но все на одном узле minikube.
 - Окна считаются по времени приема на сервере. События, которые трекер отправил с опозданием (после сбоя сети или при следующем открытии страницы), попадают в более позднее окно.
 - У repository нет интеграционного теста на настоящем PostgreSQL.
+- У `GET /stats` нет авторизации: статистику может прочитать любой, кто видит страницу.

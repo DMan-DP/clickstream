@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Статистика заказов</title>
+  <link rel="stylesheet" href="stats.css">
+  <script src="stats.js" defer></script>
+</head>
+<body>
+  <main class="viz-root">
+    <header class="top">
+      <div>
+        <h1>Статистика</h1>
+        <p class="muted" id="period-text">Загрузка...</p>
+      </div>
+      <a class="link" href="/">К странице заказа</a>
+    </header>
+
+    <form id="filters" class="filters">
+      <label>Период
+        <select name="period">
+          <option value="15m">15 минут</option>
+          <option value="1h" selected>1 час</option>
+          <option value="6h">6 часов</option>
+          <option value="24h">24 часа</option>
+          <option value="168h">7 дней</option>
+        </select>
+      </label>
+      <label>Длина окна, с
+        <input name="window_sec" type="number" min="1" max="86400" placeholder="по умолчанию">
+      </label>
+      <label class="check">
+        <input name="auto" type="checkbox" checked> обновлять каждые 10 с
+      </label>
+      <button type="submit">Обновить</button>
+    </form>
+
+    <p id="error" class="error" role="alert" hidden></p>
+
+    <section class="tiles" aria-label="Итоги за период">
+      <div class="tile"><span class="tile-label">Событий</span><span class="tile-value" id="kpi-events">-</span></div>
+      <div class="tile"><span class="tile-label">Сессий на странице</span><span class="tile-value" id="kpi-visits">-</span></div>
+      <div class="tile"><span class="tile-label">Отправок заказа</span><span class="tile-value" id="kpi-submits">-</span></div>
+      <div class="tile"><span class="tile-label">Конверсия в заказ</span><span class="tile-value" id="kpi-conversion">-</span></div>
+    </section>
+
+    <section class="panel">
+      <h2>Воронка заказа</h2>
+      <p class="muted small">Сколько сессий дошло до шага. Процент: от предыдущего шага и от входа на страницу.</p>
+      <div id="funnel" class="funnel"></div>
+    </section>
+
+    <section class="panel">
+      <h2>События во времени</h2>
+      <p class="muted small" id="series-note"></p>
+      <div id="series" class="chart"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Популярный выбор</h2>
+      <p class="muted small">Сколько раз значение выбирали. Значения по умолчанию (маргарита, 30 см, 1 шт.) без смены не считаются.</p>
+      <div id="choices" class="choices"></div>
+    </section>
+
+    <section class="panel">
+      <h2>События по элементам</h2>
+      <div class="table-wrap">
+        <table id="totals">
+          <thead><tr><th>Тип</th><th>Элемент</th><th class="num">Событий</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+</body>
+</html>

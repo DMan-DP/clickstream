@@ -56,6 +56,7 @@ func run(logger *slog.Logger, cfg *config.Config) (err error) {
 	routes := handler.Routes{
 		Livez:  handler.NewLiveness(logger.With("component", "liveness"), tracker),
 		Readyz: handler.NewReadiness(logger.With("component", "readiness"), db),
+		Stats:  handler.NewStats(logger.With("component", "stats"), db, cfg.WindowSize),
 	}
 
 	server := &http.Server{

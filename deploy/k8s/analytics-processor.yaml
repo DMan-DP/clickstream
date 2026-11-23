@@ -1,6 +1,8 @@
 # analytics-processor: a consumer group member, reads Kafka and writes
-# window counts to Postgres. No Service: nobody sends requests to it, the
-# HTTP port serves only the probes for the kubelet.
+# window counts to Postgres. The HTTP port serves the probes for the
+# kubelet and GET /stats; the Service is for the frontend, which proxies
+# /api/stats to it. The Service sends requests only to ready pods, and
+# readiness is a database ping, so a pod without Postgres gets none.
 #
 # There is no depends_on in Kubernetes. Without Kafka or Postgres the
 # process exits at start and the pod is restarted with a growing pause
@@ -8,6 +10,20 @@
 # (migrate Job still running), a save fails, the counts stay in memory
 # and the offsets are not committed; the next flush after the migrations
 # saves them, nothing is lost.
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-processor
+  labels:
+    app.kubernetes.io/name: analytics-processor
+spec:
+  selector:
+    app.kubernetes.io/name: analytics-processor
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

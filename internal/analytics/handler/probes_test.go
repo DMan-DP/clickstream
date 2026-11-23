@@ -137,6 +137,7 @@ func TestRouter(t *testing.T) {
 	routes := Routes{
 		Livez:  http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }),
 		Readyz: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusAccepted) }),
+		Stats:  http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNonAuthoritativeInfo) }),
 	}
 	mux := NewRouter(routes)
 
@@ -150,6 +151,9 @@ func TestRouter(t *testing.T) {
 		{method: http.MethodHead, path: "/livez", wantStatus: http.StatusOK},
 		{method: http.MethodGet, path: "/readyz", wantStatus: http.StatusAccepted},
 		{method: http.MethodHead, path: "/readyz", wantStatus: http.StatusAccepted},
+		{method: http.MethodGet, path: "/stats", wantStatus: http.StatusNonAuthoritativeInfo},
+		{method: http.MethodGet, path: "/stats?period=2h", wantStatus: http.StatusNonAuthoritativeInfo},
+		{method: http.MethodPost, path: "/stats", wantStatus: http.StatusMethodNotAllowed, wantAllow: true},
 		{method: http.MethodPost, path: "/livez", wantStatus: http.StatusMethodNotAllowed, wantAllow: true},
 		{method: http.MethodPost, path: "/readyz", wantStatus: http.StatusMethodNotAllowed, wantAllow: true},
 		{method: http.MethodGet, path: "/health", wantStatus: http.StatusNotFound},

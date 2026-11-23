@@ -1,0 +1,345 @@
+/* Statistics page. Colors are roles: light and dark values are set here
+   only, the rest of the file uses the variables. */
+:root {
+  color-scheme: light;
+  --page: #f6f3ee;
+  --surface-1: #fcfcfb;
+  --border: #e3dcd4;
+  --grid: #ebe7e1;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #7a7873;
+  --error: #c92a2a;
+  --series-1: #2a78d6;
+  /* Ordinal blue ramp for the funnel steps, light to dark */
+  --step-1: #86b6ef;
+  --step-2: #5598e7;
+  --step-3: #2a78d6;
+  --step-4: #1c5cab;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #121211;
+    --surface-1: #1a1a19;
+    --border: #2e2d2b;
+    --grid: #2a2927;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8f8d86;
+    --error: #ff8787;
+    --series-1: #3987e5;
+    --step-1: #1c5cab;
+    --step-2: #256abf;
+    --step-3: #3987e5;
+    --step-4: #6da7ec;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.viz-root {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+h2 {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+}
+
+.muted {
+  color: var(--text-secondary);
+  margin: 2px 0 0;
+}
+
+.small {
+  font-size: 0.85rem;
+  margin: 0 0 12px;
+}
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.link {
+  color: var(--series-1);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+  margin: 20px 0 16px;
+}
+
+.filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.filters label.check {
+  flex-direction: row;
+  align-items: center;
+  padding-bottom: 8px;
+}
+
+.filters select,
+.filters input[type="number"],
+.filters button {
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.filters input[type="number"] {
+  width: 140px;
+}
+
+.filters button {
+  cursor: pointer;
+}
+
+.error {
+  color: var(--error);
+  margin: 0 0 16px;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.tile,
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.tile {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.tile-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.tile-value {
+  font-size: 1.9rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.panel {
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+/* Funnel: one row per step, a bar from the left edge. */
+.funnel-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 150px;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.funnel-name {
+  color: var(--text-secondary);
+}
+
+.funnel-track {
+  height: 22px;
+}
+
+.funnel-bar {
+  height: 100%;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+}
+
+.funnel-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-value .pct {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+/* Column chart */
+.chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.chart .axis-text {
+  fill: var(--text-muted);
+  font-size: 11px;
+}
+
+.chart .grid-line {
+  stroke: var(--grid);
+  stroke-width: 1;
+}
+
+.chart .bar {
+  pointer-events: none;
+  fill: var(--series-1);
+}
+
+.chart .hit {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+.chart .hit:hover + .bar,
+.chart .bar.active {
+  opacity: 0.75;
+}
+
+.empty {
+  color: var(--text-muted);
+  padding: 16px 0;
+}
+
+/* Choices: one small bar list per group */
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 20px;
+}
+
+.choice-group h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.choice-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+}
+
+.choice-row .value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.choice-track {
+  grid-column: 1 / -1;
+  height: 8px;
+}
+
+.choice-bar {
+  height: 100%;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+  background: var(--series-1);
+}
+
+/* Table view */
+.table-wrap {
+  max-height: 420px;
+  overflow: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--grid);
+}
+
+th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 10;
+  pointer-events: none;
+  max-width: 260px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  background: #0b0b0b;
+  color: #f0efec;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);
+}
+
+.tooltip .tt-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.tooltip .tt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 560px) {
+  .funnel-row {
+    grid-template-columns: 90px 1fr;
+  }
+
+  .funnel-value {
+    grid-column: 2;
+  }
+}

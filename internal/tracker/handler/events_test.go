@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/DMan-DP/clickstream/internal/httpx"
 	"github.com/DMan-DP/clickstream/internal/tracker/service"
 )
 
@@ -549,7 +550,7 @@ func TestEventsServeHTTP(t *testing.T) {
 			name:          "ingest client gone",
 			body:          validBody,
 			ingestErr:     fmt.Errorf("publish batch: %w", context.Canceled),
-			wantStatus:    statusClientClosedRequest,
+			wantStatus:    httpx.StatusClientClosedRequest,
 			wantCalled:    true,
 			wantEmptyBody: true,
 		},

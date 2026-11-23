@@ -11,6 +11,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/DMan-DP/clickstream/internal/httpx"
 	"github.com/DMan-DP/clickstream/internal/tracker/service"
 )
 
@@ -18,11 +19,6 @@ const (
 	maxBodyBytes = 64 << 10
 	maxBatchSize = 100
 )
-
-// statusClientClosedRequest is the nginx status for a request whose client
-// closed the connection before the response was written. net/http has no
-// constant for it.
-const statusClientClosedRequest = 499
 
 var (
 	errNoEvents      = errors.New("no events")
@@ -67,18 +63,18 @@ func (h *Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			h.logger.WarnContext(ctx, "bad request", "err", err)
-			writeError(w, http.StatusRequestEntityTooLarge, "Request entity too large")
+			httpx.WriteError(w, http.StatusRequestEntityTooLarge, "Request entity too large")
 			return
 		}
 
 		h.logger.WarnContext(ctx, "bad request", "err", err)
-		writeError(w, http.StatusBadRequest, "Bad request")
+		httpx.WriteError(w, http.StatusBadRequest, "Bad request")
 		return
 	}
 
 	if err := validate(req); err != nil {
 		h.logger.WarnContext(ctx, "bad request", "err", err)
-		writeError(w, http.StatusBadRequest, validationMessage(err))
+		httpx.WriteError(w, http.StatusBadRequest, validationMessage(err))
 		return
 	}
 
@@ -92,7 +88,7 @@ func (h *Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"session_id", req.SessionID,
 				"err", err,
 			)
-			w.WriteHeader(statusClientClosedRequest)
+			w.WriteHeader(httpx.StatusClientClosedRequest)
 			return
 		case errors.Is(err, context.DeadlineExceeded):
 			h.logger.ErrorContext(ctx, "ingest timeout",
@@ -100,7 +96,7 @@ func (h *Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"session_id", req.SessionID,
 				"err", err,
 			)
-			writeError(w, http.StatusServiceUnavailable, "Service unavailable")
+			httpx.WriteError(w, http.StatusServiceUnavailable, "Service unavailable")
 			return
 		case errors.Is(err, service.ErrUnavailable):
 			h.logger.ErrorContext(ctx, "ingest unavailable",
@@ -108,7 +104,7 @@ func (h *Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"session_id", req.SessionID,
 				"err", err,
 			)
-			writeError(w, http.StatusServiceUnavailable, "Service unavailable")
+			httpx.WriteError(w, http.StatusServiceUnavailable, "Service unavailable")
 			return
 		default:
 			h.logger.ErrorContext(ctx, "ingest failed",
@@ -116,7 +112,7 @@ func (h *Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"session_id", req.SessionID,
 				"err", err,
 			)
-			writeError(w, http.StatusInternalServerError, "Internal server error")
+			httpx.WriteError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 	}
@@ -125,7 +121,7 @@ func (h *Events) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Accepted: result.Accepted,
 		Skipped:  result.Skipped,
 	}
-	writeJSON(w, http.StatusAccepted, res)
+	httpx.WriteJSON(w, http.StatusAccepted, res)
 	h.logger.InfoContext(ctx, "batch accepted",
 		"session_id", req.SessionID,
 		"accepted", result.Accepted,

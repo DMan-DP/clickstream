@@ -6,6 +6,8 @@ server {
     listen 80;
     server_name _;
 
+    # Order page at /, statistics page at /stats/ (frontend/site and
+    # frontend/stats, two separate directories)
     root /usr/share/nginx/html;
     index index.html;
 
@@ -23,6 +25,30 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Statistics from PostgreSQL, served by analytics-processor as GET
+    # /stats. Under /api/ so it does not clash with the page at /stats/.
+    # Only this path is proxied: the probes of analytics-processor stay
+    # internal. The query string is passed on as is.
+    location = /api/stats {
+        proxy_pass ${ANALYTICS_API_URL}/stats;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Relative Location: nginx listens on 80 inside the container, an
+    # absolute redirect would drop the published port (3000)
+    location = /stats {
+        absolute_redirect off;
+        return 301 /stats/;
+    }
+
+    location /stats/ {
+        alias /usr/share/nginx/stats/;
     }
 
     location / {

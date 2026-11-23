@@ -192,8 +192,9 @@ services:
     # Rebalance.Timeout, 60 s), then the final write to PostgreSQL.
     stop_grace_period: 75s
 
-  # Demo page and reverse proxy: /events goes to tracker-api, so the page
-  # and the API share one origin. Page: http://localhost:3000
+  # Demo page and reverse proxy: /events goes to tracker-api, /api/stats to
+  # analytics-processor, so the pages and the APIs share one origin.
+  # Order page: http://localhost:3000, statistics: http://localhost:3000/stats/
   # The image with the files baked in is for Kubernetes
   # (deploy/frontend/Dockerfile). Here the files are mounted on top of
   # them, so edits of the page show up without a rebuild.
@@ -203,10 +204,12 @@ services:
       dockerfile: deploy/frontend/Dockerfile
     image: clickstream/frontend:dev
     container_name: clickstream-frontend
-    # nginx resolves the upstream name once at start and exits if it is
-    # unknown, so tracker-api must be running first
+    # nginx resolves the upstream names once at start and exits if one is
+    # unknown, so both services must be running first
     depends_on:
       tracker-api:
+        condition: service_healthy
+      analytics-processor:
         condition: service_healthy
     ports:
       - "${FRONTEND_PORT:-3000}:80"
@@ -214,11 +217,14 @@ services:
       # tracker-api in compose by default; for tracker-api started on the
       # host (debugger, go run): http://host.docker.internal:8080
       TRACKER_API_URL: ${TRACKER_API_URL:-http://tracker-api:8080}
+      # The same for analytics-processor: http://host.docker.internal:8081
+      ANALYTICS_API_URL: ${ANALYTICS_API_URL:-http://analytics-processor:8081}
     extra_hosts:
       # Docker Desktop resolves host.docker.internal itself, Linux needs this line
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./frontend:/usr/share/nginx/html:ro
+      - ./frontend/site:/usr/share/nginx/html:ro
+      - ./frontend/stats:/usr/share/nginx/stats:ro
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
 
 volumes:

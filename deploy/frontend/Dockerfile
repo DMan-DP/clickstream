@@ -8,10 +8,12 @@
 # kubectl -n clickstream rollout restart deployment frontend.
 FROM nginx:1.28.0-alpine
 
-# Upstream for /events, rendered into the template at start. The Service
-# name works both in compose and in the cluster; override it with the
-# environment variable of the container.
+# Upstreams for /events and /api/stats, rendered into the template at
+# start. The Service names work both in compose and in the cluster;
+# override them with the environment variables of the container.
 ENV TRACKER_API_URL=http://tracker-api:8080
+ENV ANALYTICS_API_URL=http://analytics-processor:8081
 
 COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
-COPY frontend/ /usr/share/nginx/html/
+COPY frontend/site/ /usr/share/nginx/html/
+COPY frontend/stats/ /usr/share/nginx/stats/

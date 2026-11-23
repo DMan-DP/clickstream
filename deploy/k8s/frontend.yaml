@@ -1,5 +1,6 @@
 # frontend: nginx with the page, /events is proxied to the tracker-api
-# Service, so the browser talks to one origin and needs no CORS.
+# Service and /api/stats to the analytics-processor Service, so the browser
+# talks to one origin and needs no CORS.
 # From the host: kubectl -n clickstream port-forward svc/frontend 3000:80
 # then open http://localhost:3000
 ---
@@ -41,13 +42,15 @@ spec:
           image: clickstream/frontend:dev
           # Loaded with minikube image load, there is no registry
           imagePullPolicy: IfNotPresent
-          # nginx resolves tracker-api once at start and exits if the name
-          # is unknown. The Service has a stable ClusterIP, so resolving
-          # once is fine; if it does not exist yet, the pod restarts until
-          # it does (no depends_on in Kubernetes).
+          # nginx resolves tracker-api and analytics-processor once at start
+          # and exits if a name is unknown. Services have stable ClusterIPs,
+          # so resolving once is fine; if one does not exist yet, the pod
+          # restarts until it does (no depends_on in Kubernetes).
           env:
             - name: TRACKER_API_URL
               value: http://tracker-api:8080
+            - name: ANALYTICS_API_URL
+              value: http://analytics-processor:8081
           ports:
             - name: http
               containerPort: 80

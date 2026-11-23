@@ -6,10 +6,11 @@ User action analytics for a web page. The page sends clicks, input and field cha
 
 ## How it works
 
-1. The `frontend/` page is a pizza order form with buttons, text fields, a slider, checkboxes, radio buttons, a dropdown and a form submit.
-2. The `frontend/tracker.js` script queues events and sends them in batches to `POST /events` every 5 seconds.
+1. The `frontend/site/` page is a pizza order form with buttons, text fields, a slider, checkboxes, radio buttons, a dropdown and a form submit.
+2. The `frontend/site/tracker.js` script queues events and sends them in batches to `POST /events` every 5 seconds.
 3. The `tracker-api` service validates a batch and publishes each event as a separate message to the Kafka topic `user-events`. The message key is `session_id`, so events of one session go to the same partition.
 4. The `analytics-processor` service reads the topic in a consumer group, counts events in 30-second windows and writes the counters to the `event_stats` table. In the same windows it counts the sessions that reached each step of the order funnel (page visit, pizza chosen, contacts filled in, order sent) and writes them to `funnel_stats`.
+5. The statistics page `frontend/stats/` reads `GET /stats` of `analytics-processor` and shows the funnel, events over time, the top choices and the totals per element for a chosen period.
 
 Windows are based on the server receive time (UTC). The client time is not trusted, but it is kept in the message.
 
@@ -32,12 +33,15 @@ cmd/
 internal/
   tracker/                tracker-api code: config, handler, service, publisher
   analytics/              analytics-processor code: domain, service, repository, consumer
+  httpx/                  HTTP response helpers shared by both services
 migrations/               PostgreSQL schema
 queries/                  SQL queries over the stored counters
-frontend/                 demo page and tracker
-nginx/                    nginx config: serves frontend/, proxies /events to tracker-api
+frontend/
+  site/                   demo page and tracker
+  stats/                  statistics page
+nginx/                    nginx config: serves both pages, proxies /events and /api/stats
 deploy/
-  frontend/               nginx image with the page
+  frontend/               nginx image with both pages
   migrate/                image that applies the migrations
   k8s/                    Kubernetes manifests for minikube
 Dockerfile                service image, the SERVICE argument selects the binary
@@ -96,9 +100,10 @@ You need Docker. Go is needed only for the tests and for running a service on th
    docker compose up -d --build
    ```
 
-   Compose creates the `user-events` topic with 3 partitions, applies the migrations, then starts `tracker-api` and `analytics-processor`, and starts nginx once `tracker-api` is healthy.
+   Compose creates the `user-events` topic with 3 partitions, applies the migrations, then starts `tracker-api` and `analytics-processor`, and starts nginx once both services are healthy.
 
    - Demo page: http://localhost:3000. It is served by nginx, which also proxies `POST /events` to `tracker-api`, so the page and the API share one origin and no CORS is needed. Changes in `frontend/` show up after a page reload.
+   - Statistics page: http://localhost:3000/stats/. nginx proxies `GET /api/stats` to `GET /stats` of `analytics-processor`. Parameters: `period` (Go duration, up to `168h`, default `1h`) and `window_sec` (default `WINDOW_SIZE`), a bad value gets `400`: `curl "http://localhost:3000/api/stats?period=15m"`.
    - `tracker-api` directly: `curl http://localhost:8080/livez` returns `200` (port TRACKER_API_PORT).
    - Kafka UI: http://localhost:8090.
    - PostgreSQL: port 5433 (POSTGRES_PORT), the counters reach the tables FLUSH_INTERVAL after the events, see [Queries](#queries).
@@ -193,7 +198,7 @@ You need Docker, [minikube](https://minikube.sigs.k8s.io/docs/start/) and kubect
    kubectl -n clickstream port-forward svc/frontend 3000:80
    ```
 
-   Demo page: http://localhost:3000. If the Docker Compose stack is running too, port 3000 is taken: stop it or forward another port, for example `3001:80`. `tracker-api` directly: `kubectl -n clickstream port-forward svc/tracker-api 8080:8080`, then `curl http://localhost:8080/livez`. A port-forward goes to one pod, not through the Service balancing.
+   Demo page: http://localhost:3000, statistics: http://localhost:3000/stats/. If the Docker Compose stack is running too, port 3000 is taken: stop it or forward another port, for example `3001:80`. `tracker-api` directly: `kubectl -n clickstream port-forward svc/tracker-api 8080:8080`, then `curl http://localhost:8080/livez`. A port-forward goes to one pod, not through the Service balancing.
 
 Logs of all replicas of a service:
 
@@ -283,3 +288,4 @@ Counters are additive and one window may be stored in several parts, so the quer
 - One PostgreSQL instance everywhere, and one Kafka broker in Docker Compose: losing either of them stops the pipeline. In Kubernetes Kafka has three brokers, but they all run on one minikube node.
 - Windows are based on the server receive time. Events that the tracker sends late (after a network failure or the next time the page is opened) land in a later window.
 - The repository has no integration test against a real PostgreSQL.
+- `GET /stats` has no authorization: anyone who can reach the page can read the statistics.
