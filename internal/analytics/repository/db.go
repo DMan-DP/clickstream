@@ -32,8 +32,15 @@ const saveChoiceQuery = `
 			INSERT INTO value_stats AS t (window_sec, window_start, element_id, value, count)
 			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (window_sec, window_start, element_id, value)
-			DO UPDATE SET count      = t.count + EXCLUDED.count,
+			DO UPDATE SET count = t.count + EXCLUDED.count,
             updated_at = now()
+			`
+const saveFunnelQuery = `
+			INSERT INTO funnel_stats AS t (window_sec, window_start, step, sessions)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (window_sec, window_start, step)
+			DO UPDATE SET sessions = t.sessions + EXCLUDED.sessions,
+			updated_at = now()
 			`
 
 // Postgres writes window snapshots to PostgreSQL through a connection
@@ -62,12 +69,13 @@ func (r *Postgres) Close() error {
 	return r.db.Close()
 }
 
-// Save adds the counters of snapshot to the stored ones in one
-// transaction: a row with the same window and key gets its count
-// increased, a missing row is inserted. On error the transaction is
-// rolled back and the caller may pass the snapshot to Save again. The
-// only exception is a lost reply to COMMIT: the data may be stored
-// anyway, and a retry counts it twice.
+// Save adds the rows of snapshot (event counters, choices and funnel
+// steps) to the stored ones in one transaction: a row with the same
+// window and key gets its count increased, a missing row is inserted.
+// All rows are stored together or none of them. On error the
+// transaction is rolled back and the caller may pass the snapshot to
+// Save again. The only exception is a lost reply to COMMIT: the data
+// may be stored anyway, and a retry counts it twice.
 func (r *Postgres) Save(ctx context.Context, snapshot domain.Snapshot) error {
 	windowSec := int64(snapshot.WindowSize.Seconds())
 
@@ -78,8 +86,7 @@ func (r *Postgres) Save(ctx context.Context, snapshot domain.Snapshot) error {
 	defer tx.Rollback()
 
 	for _, row := range snapshot.Counters {
-		_, err := tx.ExecContext(ctx,
-			saveCounterQuery,
+		_, err := tx.ExecContext(ctx, saveCounterQuery,
 			windowSec,
 			row.WindowStart,
 			row.Type,
@@ -92,8 +99,7 @@ func (r *Postgres) Save(ctx context.Context, snapshot domain.Snapshot) error {
 	}
 
 	for _, row := range snapshot.Choices {
-		_, err := tx.ExecContext(ctx,
-			saveChoiceQuery,
+		_, err := tx.ExecContext(ctx, saveChoiceQuery,
 			windowSec,
 			row.WindowStart,
 			row.ElementID,
@@ -102,6 +108,18 @@ func (r *Postgres) Save(ctx context.Context, snapshot domain.Snapshot) error {
 		)
 		if err != nil {
 			return fmt.Errorf("db save choice: %w", err)
+		}
+	}
+
+	for _, row := range snapshot.Funnel {
+		_, err := tx.ExecContext(ctx, saveFunnelQuery,
+			windowSec,
+			row.WindowStart,
+			row.Step.String(),
+			row.Sessions,
+		)
+		if err != nil {
+			return fmt.Errorf("db save funnel: %w", err)
 		}
 	}
 
