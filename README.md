@@ -151,7 +151,7 @@ go test ./...
 
 ## Running in Kubernetes (minikube)
 
-The same stack in a local cluster, namespace `clickstream`: PostgreSQL and Kafka (StatefulSets, one replica each), the `kafka-topics` and `migrate` Jobs, `tracker-api` and `analytics-processor` with 3 replicas each, and `frontend` (nginx with the page). kafka-ui is not deployed.
+The same stack in a local cluster, namespace `clickstream`: PostgreSQL (StatefulSet, one replica), Kafka (StatefulSet, three brokers, see [Kafka replication](#kafka-replication)), the `kafka-topics` and `migrate` Jobs, `tracker-api` and `analytics-processor` with 3 replicas each, and `frontend` (nginx with the page). kafka-ui is not deployed.
 
 You need Docker, [minikube](https://minikube.sigs.k8s.io/docs/start/) and kubectl.
 
@@ -236,6 +236,23 @@ Stopping:
 - `kubectl -n clickstream scale deployment,statefulset --all --replicas=0` stops only this project, the data stays. To start it again, run `kubectl apply -k deploy/k8s`: the manifests set the replica counts back.
 - `kubectl delete -k deploy/k8s` removes the namespace together with the PostgreSQL and Kafka volumes. Unlike `docker compose down`, the data is gone.
 
+### Kafka replication
+
+In the cluster Kafka runs as three brokers, Docker Compose keeps one for development. Every partition of `user-events` has 3 replicas on different brokers (replication factor 3) with `min.insync.replicas=2`, and `tracker-api` waits for all in-sync replicas (`acks=all`). So `202` means the event is stored on at least two brokers:
+
+- one broker down: the remaining replicas take over as partition leaders, events are accepted;
+- two brokers down: Kafka rejects writes with `NOT_ENOUGH_REPLICAS`, `tracker-api` answers `503` and the page keeps the events and retries.
+
+To see it, check the partition leaders and in-sync replicas (`Isr`):
+
+```
+kubectl -n clickstream exec kafka-0 -- /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic user-events
+```
+
+In Git Bash prefix the command with `MSYS_NO_PATHCONV=1`, otherwise the path `/opt/...` is rewritten into a Windows path. Then take one broker down with `kubectl -n clickstream delete pod kafka-1` (it is recreated by itself), or two with `kubectl -n clickstream scale statefulset kafka --replicas=1` and back with `kubectl apply -k deploy/k8s`.
+
+All three brokers run on the single minikube node, so this protects against a failed broker, not against a lost machine.
+
 ## Queries
 
 [queries/stats.sql](queries/stats.sql) reads the counters written by `analytics-processor`: events per window and type, the same split by element, totals for the period, the top choices (pizza, size, toppings, quantity) and the order funnel conversion.
@@ -263,6 +280,6 @@ Counters are additive and one window may be stored in several parts, so the quer
 ## Limitations
 
 - No deduplication. Every event carries an `event_id`, but it is not checked yet, so a retried batch is counted twice.
-- One Kafka broker and one PostgreSQL instance, both in Docker Compose and in Kubernetes. The topic has replication factor 1, so losing either of them stops the pipeline.
+- One PostgreSQL instance everywhere, and one Kafka broker in Docker Compose: losing either of them stops the pipeline. In Kubernetes Kafka has three brokers, but they all run on one minikube node.
 - Windows are based on the server receive time. Events that the tracker sends late (after a network failure or the next time the page is opened) land in a later window.
 - The repository has no integration test against a real PostgreSQL.

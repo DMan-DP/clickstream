@@ -1,9 +1,27 @@
-# Kafka in KRaft mode: one node is both broker and controller, as in
-# compose. Clients connect to kafka:9092.
+# Kafka in KRaft mode: three nodes, each one is both broker and controller.
+# Compose keeps a single broker for development. Clients connect to
+# kafka:9092.
+#
+# Replication: every partition of user-events has 3 replicas, one per
+# broker. One of them is the leader, clients read and write only through
+# it, the other two copy from it. min.insync.replicas=2 together with the
+# producer setting acks=all (sarama.WaitForAll in tracker-api): a write is
+# confirmed only when at least 2 replicas have it, so a confirmed event
+# survives the loss of any one broker.
+# - one broker down: partitions it led get a new leader from the in-sync
+#   replicas, producers and consumers continue after a metadata refresh;
+# - two brokers down: 1 replica left, less than min.insync.replicas, writes
+#   fail with NOT_ENOUGH_REPLICAS (tracker-api answers 503 and the page
+#   retries), the controller quorum (2 of 3) is lost too.
+#
+# All three pods run on the single minikube node, so this protects against
+# a failed broker process, not against a lost machine. In production the
+# brokers would be spread over nodes (pod anti-affinity) and zones.
 ---
-# Headless Service for the broker itself: gives the pod a stable DNS name,
-# kafka-0.kafka-headless.clickstream.svc.cluster.local, which the broker
-# advertises to clients and uses as the controller quorum address.
+# Headless Service for the brokers themselves: gives every pod a stable DNS
+# name, kafka-0.kafka-headless.clickstream.svc.cluster.local and so on,
+# which the broker advertises to clients and uses as the controller quorum
+# address.
 # publishNotReadyAddresses: the name must resolve before the pod is ready,
 # because the controller connects to its own quorum address while starting.
 # Without it the pod waits for a DNS record that appears only after it is
@@ -53,10 +71,15 @@ metadata:
     app.kubernetes.io/name: kafka
 spec:
   serviceName: kafka-headless
-  # Must stay 1: KAFKA_NODE_ID and the quorum voters below are written for
-  # one node. A second replica would start with the same node id. More
-  # brokers need the id from the pod index and a voter list of all pods.
-  replicas: 1
+  # Must match KAFKA_CONTROLLER_QUORUM_VOTERS below: scaling the controller
+  # quorum is not just a replica count. Brokers without the controller role
+  # could be added, but this setup does not have them.
+  replicas: 3
+  # Start all pods at once. The default OrderedReady starts kafka-1 only
+  # after kafka-0 is ready, but a broker becomes ready only when the
+  # controller quorum (2 of 3) is up: kafka-0 would wait for kafka-1
+  # forever. Immutable: changing it needs the StatefulSet recreated.
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       app.kubernetes.io/name: kafka
@@ -87,12 +110,23 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            # Node id from the pod index: kafka-0 is node 0 and so on. The
+            # id is stored on the volume, a pod keeps it after a restart.
             - name: KAFKA_NODE_ID
-              value: "1"
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
+            # The same for all brokers: the volume is formatted with it on
+            # the first start, and a broker refuses to join a cluster with
+            # another id. Without it the image uses a built-in default.
+            - name: CLUSTER_ID
+              value: FF_ZA5_HToqqv0WULQBnLA
             - name: KAFKA_PROCESS_ROLES
               value: broker,controller
+            # All controllers, as node_id@address. A majority (2 of 3) must
+            # be up to elect the active controller.
             - name: KAFKA_CONTROLLER_QUORUM_VOTERS
-              value: 1@$(POD_NAME).kafka-headless.$(POD_NAMESPACE).svc.cluster.local:9093
+              value: 0@kafka-0.kafka-headless.$(POD_NAMESPACE).svc.cluster.local:9093,1@kafka-1.kafka-headless.$(POD_NAMESPACE).svc.cluster.local:9093,2@kafka-2.kafka-headless.$(POD_NAMESPACE).svc.cluster.local:9093
             - name: KAFKA_CONTROLLER_LISTENER_NAMES
               value: CONTROLLER
             # One listener for clients inside the cluster. No listener for
@@ -109,13 +143,18 @@ spec:
               value: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
             - name: KAFKA_INTER_BROKER_LISTENER_NAME
               value: INTERNAL
-            # Single broker: internal topics cannot have more than one replica
+            # Internal topics: consumer group offsets (__consumer_offsets)
+            # and transactions, replicated like user-events
             - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
-              value: "1"
+              value: "3"
             - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
-              value: "1"
+              value: "3"
             - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
-              value: "1"
+              value: "2"
+            # Default for every topic, including __consumer_offsets: an
+            # acks=all write needs at least 2 in-sync replicas
+            - name: KAFKA_MIN_INSYNC_REPLICAS
+              value: "2"
             - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
               value: "0"
             # Topics are created by the Job below, a typo in a topic name
@@ -127,9 +166,9 @@ spec:
             - name: KAFKA_LOG_DIRS
               value: /var/lib/kafka/data/logs
             # The image starts the JVM with a 1 GB heap by default, too much
-            # for a 4 GB node shared with everything else
+            # for three brokers on a 4 GB node shared with everything else
             - name: KAFKA_HEAP_OPTS
-              value: -Xms512m -Xmx512m
+              value: -Xms384m -Xmx384m
           volumeMounts:
             - name: data
               mountPath: /var/lib/kafka/data
@@ -148,9 +187,9 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 768Mi
+              memory: 512Mi
             limits:
-              memory: 1Gi
+              memory: 768Mi
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -163,10 +202,32 @@ spec:
           requests:
             storage: 2Gi
 ---
+# Voluntary disruptions (kubectl drain, node upgrades) may take down only
+# one broker at a time: with two down, writes stop (min.insync.replicas)
+# and the controller quorum is lost. Does not protect against crashes, and
+# kubectl delete pod ignores it.
+# A rolling update of the StatefulSet also replaces one pod at a time, but
+# it waits only for readiness (the broker port is open), not until the new
+# broker has caught up with the leaders. Operators such as Strimzi wait
+# for that before the next pod; here an update right after another may
+# leave partitions with fewer in-sync replicas for a while.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kafka
+  labels:
+    app.kubernetes.io/name: kafka
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kafka
+---
 # One-shot job: creates the topic, as kafka-init in compose. If Kafka is
 # not ready yet, the pod fails and the Job retries it with a growing pause
-# (10 s, 20 s, 40 s and so on), up to backoffLimit times. --if-not-exists
-# makes a rerun harmless.
+# (10 s, 20 s, 40 s and so on), up to backoffLimit times. The same while
+# fewer than 3 brokers have joined: a topic with 3 replicas needs 3
+# brokers. --if-not-exists makes a rerun harmless.
 # The pod template of a Job cannot be changed after creation: to change the
 # topic or the partitions, run kubectl -n clickstream delete job kafka-topics
 # first, then apply again. The same after the Job has failed (all
@@ -199,7 +260,8 @@ spec:
               --create --if-not-exists
               --topic user-events
               --partitions 3
-              --replication-factor 1
+              --replication-factor 3
+              --config min.insync.replicas=2
               && /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092
               --describe --topic user-events
           env:
