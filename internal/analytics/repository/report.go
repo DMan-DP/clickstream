@@ -11,8 +11,10 @@ import (
 
 // Report queries, the same as in queries/stats.sql. Parameters of every
 // query: $1 window length in seconds, $2 start of the period (inclusive),
-// $3 end of the period (exclusive). Counters are additive, one window may
-// be stored in several rows, so every query sums them.
+// $3 end of the period (exclusive). A row holds the counter of one window
+// and one key; the upsert has already merged the parts of a window into
+// it. Every query sums the rows it groups together: windows of the
+// period, elements of an event type, or both.
 
 const reportSeriesQuery = `
 			SELECT window_start, event_type, sum(count)::bigint AS events
