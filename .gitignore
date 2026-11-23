@@ -5,3 +5,6 @@
 *.exe
 __debug_bin*
 *.test
+
+# Kubernetes secrets for minikube, see deploy/k8s/secrets.env.example
+deploy/k8s/secrets.env

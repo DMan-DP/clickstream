@@ -1,0 +1,93 @@
+# PostgreSQL: one replica, data on a PersistentVolume.
+# From the host: kubectl -n clickstream port-forward svc/postgres 5433:5432
+---
+# Headless Service (clusterIP: None): the name "postgres" resolves straight
+# to the pod IP, without a virtual IP in between. A StatefulSet needs such a
+# Service for stable pod names (postgres-0.postgres). Only ready pods get a
+# DNS record, so clients that start before the database fail fast instead
+# of hanging on a connect.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+# StatefulSet, not Deployment: the pod keeps its name and its volume after a
+# restart, and a new pod starts only after the old one is gone, so two
+# servers never write to one data directory.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            # POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+            - secretRef:
+                name: postgres
+          env:
+            # A subdirectory of the volume: initdb refuses a non-empty
+            # directory, and some volume types have lost+found in the root
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          # Over TCP, not the Unix socket: during the first start the image
+          # runs initdb with a temporary server that listens only on the
+          # socket, and the pod must not become ready before the real one.
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # No livenessProbe: if postgres exits, the container exits with
+          # it and is restarted anyway. A probe could only add restarts of a
+          # busy but working database, and each one means crash recovery.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: postgres
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
