@@ -9,10 +9,12 @@ kind: Kustomization
 namespace: clickstream
 
 labels:
-  # Only metadata labels: selectors of existing workloads are immutable,
-  # so a shared label must not be added to them
+  # On the resources and on the pods they create (includeTemplates), so
+  # kubectl get pods -l app.kubernetes.io/part-of=clickstream finds them.
+  # Not in selectors: selectors of existing workloads are immutable.
   - pairs:
       app.kubernetes.io/part-of: clickstream
+    includeTemplates: true
 
 resources:
   - namespace.yaml

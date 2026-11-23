@@ -53,6 +53,9 @@ metadata:
     app.kubernetes.io/name: kafka
 spec:
   serviceName: kafka-headless
+  # Must stay 1: KAFKA_NODE_ID and the quorum voters below are written for
+  # one node. A second replica would start with the same node id. More
+  # brokers need the id from the pod index and a voter list of all pods.
   replicas: 1
   selector:
     matchLabels:
@@ -164,6 +167,10 @@ spec:
 # not ready yet, the pod fails and the Job retries it with a growing pause
 # (10 s, 20 s, 40 s and so on), up to backoffLimit times. --if-not-exists
 # makes a rerun harmless.
+# The pod template of a Job cannot be changed after creation: to change the
+# topic or the partitions, run kubectl -n clickstream delete job kafka-topics
+# first, then apply again. The topic name must match KAFKA_TOPIC of the
+# services, the default in compose is user-events.
 apiVersion: batch/v1
 kind: Job
 metadata:
