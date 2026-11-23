@@ -172,7 +172,7 @@ h2 {
 /* Funnel: one row per step, a bar from the left edge. */
 .funnel-row {
   display: grid;
-  grid-template-columns: 120px 1fr 150px;
+  grid-template-columns: 170px 1fr 290px;
   align-items: center;
   gap: 12px;
   padding: 4px 0;
@@ -197,6 +197,7 @@ h2 {
 }
 
 .funnel-value .pct {
+  margin-left: 8px;
   color: var(--text-secondary);
   font-size: 0.85rem;
 }
@@ -336,7 +337,7 @@ th {
 
 @media (max-width: 560px) {
   .funnel-row {
-    grid-template-columns: 90px 1fr;
+    grid-template-columns: 130px 1fr;
   }
 
   .funnel-value {

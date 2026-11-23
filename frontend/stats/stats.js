@@ -10,6 +10,12 @@
   // Columns of the time chart at most: windows are merged into buckets
   // when the period has more of them (7 days of 30 s windows is 20160).
   const MAX_BUCKETS = 90;
+  // Column lengths to choose from, seconds: round steps, so the axis shows
+  // round times. The smallest one that gives at most MAX_BUCKETS wins.
+  const BUCKET_STEPS = [60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
+  // Label every N columns, N from this list: at most MAX_LABELS labels.
+  const LABEL_STEPS = [1, 2, 3, 4, 6, 8, 12, 24, 48, 96];
+  const MAX_LABELS = 7;
 
   const TYPE_NAMES = {
     page_view: 'просмотр страницы',
@@ -166,25 +172,40 @@
       track.append(bar);
       row.append(track);
 
-      const value = el('span', 'funnel-value', nf.format(f.sessions) + ' ');
+      const value = el('span', 'funnel-value');
+      value.append(el('strong', '', nf.format(f.sessions)));
       if (i > 0) {
         const prev = funnel[i - 1].sessions;
-        value.append(el('span', 'pct', pct(f.sessions, prev) + ' / ' + pct(f.sessions, first)));
+        value.append(el('span', 'pct',
+          pct(f.sessions, prev) + ' от предыдущего, ' + pct(f.sessions, first) + ' от входа'));
       }
       row.append(value);
       box.append(row);
     });
   }
 
-  // Merges the windows into at most MAX_BUCKETS columns of equal length, a
-  // multiple of the window. Windows without events are zero columns.
+  // Offset of the local time zone, so columns and labels start at round
+  // local times (a 6 h column at 00:00, 06:00, not at 03:00 for UTC+3).
+  const TZ_MS = -new Date().getTimezoneOffset() * 60000;
+
+  // Column length: the window itself when the period fits into
+  // MAX_BUCKETS windows, otherwise the smallest round step that does and
+  // is a multiple of the window, so every window falls into one column.
+  function bucketLength(windowSec, periodMs) {
+    const windowMs = windowSec * 1000;
+    if (periodMs / windowMs <= MAX_BUCKETS) return windowMs;
+    for (const sec of BUCKET_STEPS) {
+      const ms = sec * 1000;
+      if (ms % windowMs === 0 && periodMs / ms <= MAX_BUCKETS) return ms;
+    }
+    return Math.ceil(periodMs / MAX_BUCKETS / windowMs) * windowMs;
+  }
+
+  // Merges the windows into at most about MAX_BUCKETS columns of equal
+  // length. Windows without events are zero columns.
   function buckets(report, from, to) {
-    const windowMs = report.window_sec * 1000;
-    const windows = Math.max(1, Math.ceil((to - from) / windowMs));
-    const perBucket = Math.ceil(windows / MAX_BUCKETS);
-    const bucketMs = perBucket * windowMs;
-    // Align to the window grid, as the server does (epoch-based windows)
-    const start = Math.floor(from.getTime() / windowMs) * windowMs;
+    const bucketMs = bucketLength(report.window_sec, to - from);
+    const start = Math.floor((from.getTime() + TZ_MS) / bucketMs) * bucketMs - TZ_MS;
     const count = Math.max(1, Math.ceil((to.getTime() - start) / bucketMs));
 
     const list = [];
@@ -198,6 +219,19 @@
       list[i].byType[p.event_type] = (list[i].byType[p.event_type] || 0) + p.events;
     }
     return { list, bucketMs };
+  }
+
+  // 30 с, 5 мин, 1 ч 30 мин, 1 д
+  function durationText(sec) {
+    const parts = [];
+    const units = [[86400, 'д'], [3600, 'ч'], [60, 'мин'], [1, 'с']];
+    for (const [size, name] of units) {
+      if (sec >= size) {
+        parts.push(Math.floor(sec / size) + ' ' + name);
+        sec %= size;
+      }
+    }
+    return parts.join(' ');
   }
 
   function niceMax(v) {
@@ -214,7 +248,8 @@
     box.replaceChildren();
     const { list, bucketMs } = buckets(report, from, to);
 
-    $('series-note').textContent = 'Событий за ' + (bucketMs / 1000) + ' с, наведите на столбец для разбивки по типам.';
+    $('series-note').textContent = 'Один столбец: ' + durationText(bucketMs / 1000) +
+      '. Наведите на столбец, чтобы увидеть разбивку по типам.';
 
     if (report.series.length === 0) {
       box.append(el('p', 'empty', 'За период событий нет.'));
@@ -241,7 +276,7 @@
       svg.append(t);
     }
 
-    const labelEvery = Math.ceil(list.length / 6);
+    const labelEvery = LABEL_STEPS.find((n) => list.length / n <= MAX_LABELS) || Math.ceil(list.length / MAX_LABELS);
     const fmt = to - from > 24 * 3600 * 1000 ? dateTimeFmt : timeFmt;
 
     list.forEach((b, i) => {
@@ -249,11 +284,12 @@
       const hit = svgEl('rect', { class: 'hit', x: x, y: m.top, width: step, height: ih });
       const h = Math.max(0, y(0) - y(b.total));
       const bar = svgEl('path', { class: 'bar', d: barPath(x + gap / 2, y(0), step - gap, h, 4) });
-      hit.addEventListener('mousemove', (e) => showTooltip(e, bucketTooltip(b)));
+      hit.addEventListener('mousemove', (e) => showTooltip(e, bucketTooltip(b, fmt)));
       hit.addEventListener('mouseleave', hideTooltip);
       svg.append(hit, bar);
 
-      if (i % labelEvery === 0) {
+      // Global column number, so labels sit on round local times
+      if (Math.round((b.start + TZ_MS) / bucketMs) % labelEvery === 0) {
         const t = svgEl('text', { class: 'axis-text', x: x, y: H - 6 });
         t.textContent = fmt.format(new Date(b.start));
         svg.append(t);
@@ -275,9 +311,9 @@
       'V' + base + 'Z';
   }
 
-  function bucketTooltip(b) {
+  function bucketTooltip(b, fmt) {
     const box = el('div');
-    box.append(el('div', 'tt-title', timeFmt.format(new Date(b.start)) + ' - ' + timeFmt.format(new Date(b.end))));
+    box.append(el('div', 'tt-title', fmt.format(new Date(b.start)) + ' - ' + timeFmt.format(new Date(b.end))));
     const total = el('div', 'tt-row');
     total.append(el('span', '', 'всего'), el('span', '', nf.format(b.total)));
     box.append(total);
