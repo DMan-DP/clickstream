@@ -289,3 +289,4 @@ Counters are additive and one window may be stored in several parts, so the quer
 - Windows are based on the server receive time. Events that the tracker sends late (after a network failure or the next time the page is opened) land in a later window.
 - The repository has no integration test against a real PostgreSQL.
 - `GET /stats` has no authorization: anyone who can reach the page can read the statistics.
+- `GET /stats` shares the PostgreSQL connection pool (`DB_MAX_CONNS`) with the consumer. Many concurrent heavy reports can make a flush wait for a connection and time out: the counts stay in memory and are saved on the next tick, so statistics are delayed, not lost.
