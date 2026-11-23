@@ -20,6 +20,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const serverShutdownTimeout = 10 * time.Second
+
 func run(logger *slog.Logger, cfg *config.Config) error {
 	// Listen before connecting to Kafka: a busy port fails the start at
 	// once, without waiting for the brokers, and Serve below never fails on
@@ -94,7 +96,7 @@ func run(logger *slog.Logger, cfg *config.Config) error {
 
 		logger.Info("shutting down server")
 
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
 		defer cancel()
 
 		return server.Shutdown(shutdownCtx)
@@ -104,7 +106,7 @@ func run(logger *slog.Logger, cfg *config.Config) error {
 		return fmt.Errorf("server: %w", err)
 	}
 
-	logger.Info("server gracefully stopped")
+	logger.Info("gracefully stopped")
 	return nil
 }
 

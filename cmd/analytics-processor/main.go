@@ -140,7 +140,7 @@ func run(logger *slog.Logger, cfg *config.Config) (err error) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), serverShutdownTimeout)
 	defer cancel()
 
-	// Shutdown makes ListenAndServe return, so the read below does not
+	// Shutdown makes Serve return, so the read below does not
 	// block for long: it gets the serve error, if any, or nil once the
 	// goroutine has closed the channel.
 	err = errors.Join(err, server.Shutdown(shutdownCtx), <-serveErr)
