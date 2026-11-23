@@ -1,7 +1,8 @@
 # Everything for minikube in one command:
 #   kubectl apply -k deploy/k8s
 #   kubectl delete -k deploy/k8s
-# Before the first apply: cp deploy/k8s/secrets.env.example deploy/k8s/secrets.env
+# Before the first apply:
+#   cp deploy/k8s/postgres.secret.env.example deploy/k8s/postgres.secret.env
 #
 # delete -k removes the namespace together with the volumes, and the
 # minikube storage class deletes the data with them (reclaim policy Delete).
@@ -43,7 +44,7 @@ resources:
 secretGenerator:
   - name: postgres
     envs:
-      - secrets.env
+      - postgres.secret.env
 
 # Settings of the services, the same hash suffix: an edit of a .env file
 # rolls out the pods of that service, no rollout restart needed.
